@@ -7,118 +7,30 @@ body {
   overflow-x: hidden;
 }
 
-/* 1. AURORA BACKGROUND */
-.aurora-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-.aurora-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.45;
-}
+/* Aurora */
+.aurora-bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.aurora-blob { position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.45; }
 .blob-gold { width: 60vw; height: 60vw; background: #f4c430; top: -20%; left: -10%; animation: float 22s ease-in-out infinite; }
 .blob-blue { width: 50vw; height: 50vw; background: #3b82f6; bottom: -20%; right: -10%; animation: float 28s ease-in-out infinite reverse; }
 .blob-red { width: 40vw; height: 40vw; background: #dc2626; top: 30%; left: 50%; animation: float 18s ease-in-out infinite; }
+@keyframes float { 0%, 100% { transform: translate(0,0) scale(1); } 50% { transform: translate(5%,5%) scale(1.1); } }
 
-@keyframes float {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(5%, 5%) scale(1.1); }
-}
+/* Earth */
+.earth-container { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 1000px; height: 1000px; z-index: 1; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+.earth-halo { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle, rgba(80,150,255,0.15) 40%, transparent 70%); filter: blur(30px); animation: pulseHalo 6s ease-in-out infinite; }
+@keyframes pulseHalo { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.05); opacity: 1; } }
+.earth-sphere { width: 550px; height: 550px; border-radius: 50%; position: relative; background: radial-gradient(circle at 30% 30%, #1a4a80, #0a1b30 60%, #02060d 100%); box-shadow: inset -40px -20px 100px rgba(0,0,0,0.95), inset 30px 20px 80px rgba(80,150,255,0.3), 0 0 80px rgba(80,150,255,0.2); overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
+.earth-continents { position: absolute; inset: 0; background-image: url("https://threejs.org/examples/textures/planets/earth_atmos_2048.jpg"); background-size: 200% 100%; background-repeat: repeat-x; animation: earthRotate 50s linear infinite; filter: contrast(1.15) saturate(1.2); }
+@keyframes earthRotate { from { background-position: 0% 0; } to { background-position: -200% 0; } }
 
-/* 2. THE CINEMATIC EARTH */
-.earth-container {
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 800px;
-  height: 800px;
-  z-index: 1;
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  perspective: 1000px;
-}
+.noise-overlay { position: fixed; inset: 0; z-index: 2; pointer-events: none; opacity: 0.05; background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"); }
+.vignette { position: fixed; inset: 0; z-index: 2; pointer-events: none; background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.8) 100%); }
 
-.earth-halo {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(80,150,255,0.15) 40%, transparent 70%);
-  filter: blur(30px);
-  animation: pulseHalo 6s ease-in-out infinite;
-}
-@keyframes pulseHalo {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.05); opacity: 1; }
-}
+.glass-panel { background: rgba(10,15,25,0.7); backdrop-filter: blur(20px); border: 1px solid rgba(244,196,48,0.3); border-radius: 1rem; box-shadow: 0 30px 60px -15px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1); }
 
-.earth-sphere {
-  width: 550px;
-  height: 550px;
-  border-radius: 50%;
-  position: relative;
-  background: radial-gradient(circle at 30% 30%, #1a4a80, #0a1b30 60%, #02060d 100%);
-  box-shadow: 
-    inset -40px -20px 100px rgba(0,0,0,0.95),
-    inset 30px 20px 80px rgba(80,150,255,0.3),
-    0 0 80px rgba(80,150,255,0.2);
-  overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.05);
-}
+.title-gold { background: linear-gradient(180deg, #fff 0%, #f4c430 50%, #b8860b 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 20px rgba(244,196,48,0.6)); }
 
-/* Real Continent Shapes using SVG Data URI */
-.earth-continents {
-  position: absolute;
-  inset: -100%; /* Scale up to wrap around sphere */
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 500'><path d='M 155,90 C 175,72 210,68 235,80 C 260,92 268,118 265,145 C 272,152 285,160 285,178 C 288,198 275,215 258,228 C 248,248 240,272 232,298 C 226,320 218,340 205,355 C 195,368 178,375 165,370 C 152,360 148,342 145,320 C 140,295 138,270 130,245 C 122,220 118,195 120,172 C 122,148 135,128 148,110 Z' fill='%23d9b465' opacity='0.9'/><path d='M 440,95 C 465,80 500,72 540,72 C 570,72 595,78 615,92 C 640,110 648,132 650,158 C 655,180 662,200 668,222 C 678,245 685,268 682,290 C 678,310 665,325 648,332 C 630,338 610,332 595,320 C 582,308 570,292 558,275 C 545,258 530,242 518,225 C 505,208 492,190 480,172 C 470,155 462,138 456,120 C 452,108 446,102 440,95 Z' fill='%23d9b465' opacity='0.9'/><path d='M 800,100 C 830,90 860,95 880,115 C 900,140 900,170 880,190 C 860,210 830,210 810,190 C 790,170 785,130 800,100 Z' fill='%23d9b465' opacity='0.9'/></svg>");
-  background-size: 50% 100%;
-  background-repeat: repeat-x;
-  animation: rotateEarth 40s linear infinite;
-  filter: contrast(1.2) saturate(1.2) drop-shadow(0 0 10px rgba(244,196,48,0.5));
-}
-
-@keyframes rotateEarth {
-  from { background-position: 0% 0; }
-  to { background-position: -200% 0; }
-}
-
-/* 3. NOISE & VIGNETTE */
-.noise-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  opacity: 0.05;
-  background-image: url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
-.vignette {
-  position: fixed;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.8) 100%);
-}
-
-/* 4. GLASS PANELS & TYPOGRAPHY */
-.glass-panel {
-  background: rgba(10, 15, 25, 0.7);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(244, 196, 48, 0.3);
-  border-radius: 1rem;
-  box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.1);
-}
-
-.title-gold {
-  background: linear-gradient(180deg, #ffffff 0%, #f4c430 50%, #b8860b 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 0 20px rgba(244,196,48,0.6));
+@media (max-width: 768px) {
+  .earth-sphere { width: 340px; height: 340px; }
+  .earth-container { width: 400px; height: 400px; }
 }
