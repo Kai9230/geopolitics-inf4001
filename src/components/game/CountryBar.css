@@ -1,0 +1,152 @@
+.country-bar {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 14px;
+  color: #e9eef6;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(25, 39, 56, 0.97),
+      rgba(8, 15, 26, 0.98)
+    );
+  border: 1px solid rgba(171, 193, 217, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
+}
+
+.country-bar__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #b8c9dc;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.country-bar__indicator {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #e7bd67;
+  box-shadow: 0 0 10px rgba(231, 189, 103, 0.5);
+}
+
+.country-bar__total {
+  margin-left: auto;
+  color: #8fabc5;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+
+.country-bar__countries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.country-bar__country {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 9px 12px;
+  color: #dae4ef;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(171, 193, 217, 0.15);
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.country-bar__country:hover {
+  background: rgba(231, 189, 103, 0.09);
+  border-color: rgba(231, 189, 103, 0.45);
+}
+
+.country-bar__country--selected {
+  color: #fff2cf;
+  background: rgba(231, 189, 103, 0.13);
+  border-color: #e7bd67;
+  box-shadow: inset 0 0 14px rgba(231, 189, 103, 0.05);
+}
+
+.country-bar__country:focus-visible {
+  outline: 2px solid #e7bd67;
+  outline-offset: 3px;
+}
+
+.country-bar__flag {
+  flex-shrink: 0;
+  font-family:
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Noto Color Emoji",
+    sans-serif;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.country-bar__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.country-bar__army {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  color: #e7bd67;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+  .country-bar {
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .country-bar__countries {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .country-bar__country {
+    padding: 8px;
+    font-size: 12px;
+  }
+
+  .country-bar__flag {
+    font-size: 20px;
+  }
+
+  .country-bar__army {
+    padding-left: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .country-bar__country {
+    transition: none;
+  }
+}

@@ -12,6 +12,7 @@
     "@google/genai": "^2.31.0",
     "@google/generative-ai": "^0.24.1",
     "clsx": "^2.1.1",
+    "d3-geo": "^3.1.1",
     "firebase": "^13.1.0",
     "framer-motion": "^14.6.0",
     "groq-sdk": "^1.6.0",
@@ -24,6 +25,8 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
+    "@types/d3-geo": "^3.1.1",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
