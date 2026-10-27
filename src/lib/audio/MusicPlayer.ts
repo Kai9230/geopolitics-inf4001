@@ -1,282 +1,216 @@
+export type MusicScene = "login" | "battle" | "silent";
+
 export class MusicPlayer {
-  private static currentAudio: HTMLAudioElement | null = null;
-
+  private static audio: HTMLAudioElement | null = null;
   private static muted = false;
-
-  // Master volume multiplies the volume supplied to play().
   private static masterVolume = 1;
-
   private static trackVolume = 0.3;
-
-  private static initialised = false;
-
+  private static scene: MusicScene = "silent";
+  private static loaded = false;
   private static listeners = new Set<() => void>();
 
-  private static readonly STORAGE_KEY =
-    "geopolitics-music-settings";
+  private static readonly key = "geopolitics-music-settings";
 
-  // --------------------------------------------------
-  // Load saved preferences once in the browser.
-  // --------------------------------------------------
+  private static loadSettings() {
+    if (typeof window === "undefined" || this.loaded) return;
 
-  private static initialise() {
-    if (
-      typeof window === "undefined" ||
-      this.initialised
-    ) {
-      return;
-    }
-
-    this.initialised = true;
+    this.loaded = true;
+    this.scene = window.location.pathname === "/" ? "login" : "silent";
 
     try {
-      const saved = localStorage.getItem(
-        this.STORAGE_KEY,
-      );
+      const data = JSON.parse(localStorage.getItem(this.key) || "null");
 
-      if (!saved) return;
+      if (data) {
+        if (typeof data.muted === "boolean") {
+          this.muted = data.muted;
+        }
 
-      const settings: unknown = JSON.parse(saved);
-
-      if (
-        typeof settings !== "object" ||
-        settings === null
-      ) {
-        return;
-      }
-
-      const values = settings as {
-        muted?: unknown;
-        volume?: unknown;
-      };
-
-      if (typeof values.muted === "boolean") {
-        this.muted = values.muted;
-      }
-
-      if (
-        typeof values.volume === "number" &&
-        Number.isFinite(values.volume)
-      ) {
-        this.masterVolume = Math.max(
-          0,
-          Math.min(1, values.volume),
-        );
+        if (
+          typeof data.volume === "number" &&
+          Number.isFinite(data.volume)
+        ) {
+          this.masterVolume = Math.max(0, Math.min(1, data.volume));
+        }
       }
     } catch {
-      // Music still works if browser storage is unavailable.
+      // Storage may be unavailable in restricted browser modes.
     }
   }
 
-  // --------------------------------------------------
-  // Save preferences and update subscribed controls.
-  // --------------------------------------------------
-
-  private static saveSettings() {
+  private static save() {
     if (typeof window === "undefined") return;
 
     try {
       localStorage.setItem(
-        this.STORAGE_KEY,
+        this.key,
         JSON.stringify({
           muted: this.muted,
           volume: this.masterVolume,
         }),
       );
     } catch {
-      // Storage failure should not interrupt gameplay.
+      // Audio remains usable even if preferences cannot be saved.
     }
   }
 
   private static notify() {
-    this.listeners.forEach((listener) => {
-      listener();
-    });
+    this.listeners.forEach((listener) => listener());
   }
 
-  private static applyVolume() {
-    if (!this.currentAudio) return;
+  private static apply() {
+    if (!this.audio) return;
 
-    this.currentAudio.volume =
-      this.trackVolume * this.masterVolume;
-
-    this.currentAudio.muted = this.muted;
+    this.audio.muted = this.muted;
+    this.audio.volume = this.trackVolume * this.masterVolume;
   }
 
-  private static startPlayback() {
+  private static start() {
     if (
-      !this.currentAudio ||
+      typeof window === "undefined" ||
+      document.hidden ||
       this.muted ||
-      this.masterVolume === 0
+      this.masterVolume === 0 ||
+      !this.audio ||
+      this.scene === "silent"
     ) {
       return;
     }
 
-    // Browsers may require a click before allowing audio.
-    void this.currentAudio.play().catch(() => {
-      // A later user action can call resume().
+    void this.audio.play().catch(() => {
+      // A later user interaction can unlock browser audio.
     });
   }
 
-  // --------------------------------------------------
-  // Play or switch tracks.
-  //
-  // Existing calls remain compatible:
-  // MusicPlayer.play("/sounds/login-theme.mp3", true, 0.3);
-  // --------------------------------------------------
-
-  static play(
-    src: string,
-    loop = true,
-    volume = 0.3,
-  ) {
+  static setScene(scene: MusicScene) {
     if (typeof window === "undefined") return;
 
-    this.initialise();
+    this.loadSettings();
+    this.scene = scene;
 
-    const trackVolume = Number.isFinite(volume)
+    if (scene === "silent") {
+      this.stop();
+      this.notify();
+      return;
+    }
+
+    this.play(
+      scene === "login"
+        ? "/sounds/login-theme.mp3"
+        : "/sounds/battle-theme.mp3",
+      true,
+      scene === "login" ? 0.3 : 0.4,
+    );
+
+    this.notify();
+  }
+
+  static getScene() {
+    this.loadSettings();
+    return this.scene;
+  }
+
+  static play(src: string, loop = true, volume = 0.3) {
+    if (typeof window === "undefined") return;
+
+    this.loadSettings();
+
+    const allowed =
+      this.scene === "login"
+        ? "/sounds/login-theme.mp3"
+        : this.scene === "battle"
+          ? "/sounds/battle-theme.mp3"
+          : null;
+
+    // Ignore old ambient/victory calls that violate the scene policy.
+    if (src !== allowed) return;
+
+    this.trackVolume = Number.isFinite(volume)
       ? Math.max(0, Math.min(1, volume))
       : 0.3;
 
-    const absoluteSrc = new URL(
-      src,
-      window.location.href,
-    ).href;
+    const url = new URL(src, window.location.href).href;
 
-    if (
-      this.currentAudio?.src === absoluteSrc
-    ) {
-      this.trackVolume = trackVolume;
-      this.currentAudio.loop = loop;
-
-      this.applyVolume();
-      this.startPlayback();
-
-      return;
+    if (this.audio?.src !== url) {
+      this.stop();
+      this.audio = new Audio(url);
+      this.audio.preload = "auto";
     }
 
-    this.stop();
-
-    const audio = new Audio(absoluteSrc);
-
-    audio.loop = loop;
-    audio.preload = "auto";
-
-    this.currentAudio = audio;
-    this.trackVolume = trackVolume;
-
-    // Keep the requested track even when music is muted.
-    this.applyVolume();
-    this.startPlayback();
+    this.audio.loop = loop;
+    this.apply();
+    this.start();
   }
 
-  // --------------------------------------------------
-  // Stop and release the current track.
-  // Used when leaving a page.
-  // --------------------------------------------------
+  static pause() {
+    this.audio?.pause();
+  }
 
   static stop() {
-    if (!this.currentAudio) return;
+    if (!this.audio) return;
 
-    const audio = this.currentAudio;
-
-    this.currentAudio = null;
+    const audio = this.audio;
+    this.audio = null;
 
     audio.pause();
     audio.removeAttribute("src");
     audio.load();
   }
 
-  // --------------------------------------------------
-  // Resume the remembered track.
-  // Call from a user interaction when necessary.
-  // --------------------------------------------------
-
   static resume() {
     if (typeof window === "undefined") return;
 
-    this.initialise();
-    this.applyVolume();
-    this.startPlayback();
+    this.loadSettings();
+    this.apply();
+    this.start();
   }
 
-  // --------------------------------------------------
-  // Music on/off.
-  // Muting pauses but does not forget the track.
-  // --------------------------------------------------
-
   static setMuted(muted: boolean) {
-    if (typeof window === "undefined") return;
-
-    this.initialise();
-
+    this.loadSettings();
     this.muted = muted;
-
-    this.applyVolume();
+    this.apply();
 
     if (muted) {
-      this.currentAudio?.pause();
+      this.pause();
     } else {
-      this.startPlayback();
+      this.start();
     }
 
-    this.saveSettings();
+    this.save();
     this.notify();
   }
 
   static toggleMute() {
-    this.initialise();
+    this.loadSettings();
     this.setMuted(!this.muted);
-
     return this.muted;
   }
 
   static isMuted() {
-    this.initialise();
-
+    this.loadSettings();
     return this.muted;
   }
 
-  // --------------------------------------------------
-  // Master volume: 0 = silent, 1 = full track volume.
-  // --------------------------------------------------
-
   static setVolume(volume: number) {
-    if (
-      typeof window === "undefined" ||
-      !Number.isFinite(volume)
-    ) {
-      return;
-    }
+    if (!Number.isFinite(volume)) return;
 
-    this.initialise();
-
-    this.masterVolume = Math.max(
-      0,
-      Math.min(1, volume),
-    );
-
-    this.applyVolume();
+    this.loadSettings();
+    this.masterVolume = Math.max(0, Math.min(1, volume));
+    this.apply();
 
     if (this.masterVolume === 0) {
-      this.currentAudio?.pause();
+      this.pause();
     } else {
-      this.startPlayback();
+      this.start();
     }
 
-    this.saveSettings();
+    this.save();
     this.notify();
   }
 
   static getVolume() {
-    this.initialise();
-
+    this.loadSettings();
     return this.masterVolume;
   }
-
-  // --------------------------------------------------
-  // Let a React audio-control component follow changes.
-  // --------------------------------------------------
 
   static subscribe(listener: () => void) {
     this.listeners.add(listener);
