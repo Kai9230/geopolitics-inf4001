@@ -1,334 +1,693 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { onAuthStateChanged, signOut } from "firebase/auth";
 
-import { auth } from "../../lib/firebase/config";
-import { GameRepository } from "../../lib/db/GameRepository";
-import { GameEngine } from "../../lib/engine/GameEngine";
-import { MusicPlayer } from "../../lib/audio/MusicPlayer";
 
-import type { Game } from "../../types";
+import {
+  onAuthStateChanged,
+  signOut,
+  type User,
+} from "firebase/auth";
+
+import {
+  collection,
+  onSnapshot,
+  query,
+  where,
+} from "firebase/firestore";
+
+import { auth, db } from "@/lib/firebase/config";
+
+import { CampaignClient } from "@/lib/api/CampaignClient";
+import { BattleRules } from "@/lib/engine/BattleRules";
+
+import { COUNTRY_CATALOGUE } from "@/data/country-catalogue";
+
+import type {
+  CampaignState,
+  Difficulty,
+} from "@/types/game-state";
+
+import styles from "@/styles/Campaign.module.css";
+
+
+type StatusFilter = "all" | "active" | "completed";
+
+interface CreationAttempt {
+  signature: string;
+  id: string;
+}
 
 export default function LobbyPage() {
   const router = useRouter();
 
-  const [games, setGames] = useState<Game[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const [campaigns, setCampaigns] = useState<
+    CampaignState[]
+  >([]);
+
+  const [countryId, setCountryId] = useState("za");
+
+  const [difficulty, setDifficulty] =
+    useState<Difficulty>("normal");
+
+  const [search, setSearch] = useState("");
+
+  const [statusFilter, setStatusFilter] =
+    useState<StatusFilter>("all");
+
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  const [pendingDelete, setPendingDelete] =
-    useState<Game | null>(null);
+  const creatingRef = useRef(false);
 
-  const [deleted, setDeleted] =
-    useState<Game | null>(null);
+  const creationAttempt =
+    useRef<CreationAttempt | null>(null);
 
-  const [deleting, setDeleting] = useState(false);
-
+  /*
+   * Subscribe to authentication changes.
+   *
+   * State updates happen inside Firebase callbacks,
+   * not directly inside the effect body.
+   */
   useEffect(() => {
     let active = true;
+    let generation = 0;
 
-    const unsubscribe = onAuthStateChanged(
+    let stopCampaigns: (() => void) | undefined;
+
+    const stopAuth = onAuthStateChanged(
       auth,
-      async (user) => {
-        if (!user) {
-          router.push("/");
+
+      (nextUser) => {
+        if (!active) return;
+
+        generation += 1;
+
+        const subscriptionGeneration = generation;
+
+        stopCampaigns?.();
+        stopCampaigns = undefined;
+
+        setUser(nextUser);
+        setAuthReady(true);
+        setCampaigns([]);
+        setLoading(nextUser !== null);
+        setError("");
+
+        if (!nextUser) {
           return;
         }
 
-        try {
-          const savedGames =
-            await GameRepository.getUserGames(user.uid);
+        const ownedCampaigns = query(
+          collection(db, "campaigns"),
+          where("state.playerId", "==", nextUser.uid),
+        );
 
-          if (active) setGames(savedGames);
-        } catch {
-          if (active) {
-            setError(
-              "Could not load your campaigns. Please refresh.",
+        stopCampaigns = onSnapshot(
+          ownedCampaigns,
+
+          (snapshot) => {
+            if (
+              !active ||
+              subscriptionGeneration !== generation
+            ) {
+              return;
+            }
+
+            const nextCampaigns = snapshot.docs
+              .map(
+                (item) =>
+                  item.data().state as
+                    | CampaignState
+                    | undefined,
+              )
+              .filter(
+                (state): state is CampaignState =>
+                  state?.schemaVersion === 1,
+              )
+              .sort(
+                (a, b) => b.updatedAt - a.updatedAt,
+              );
+
+            setCampaigns(nextCampaigns);
+            setLoading(false);
+          },
+
+          (failure) => {
+            if (
+              !active ||
+              subscriptionGeneration !== generation
+            ) {
+              return;
+            }
+
+            // FirestoreError has a code property.
+            console.error(
+              "Campaign list failed:",
+              failure.code,
             );
-          }
-        } finally {
-          if (active) setLoading(false);
-        }
+
+            setError(
+              "Could not load campaigns. Check your " +
+                "connection and the published Firestore rules.",
+            );
+
+            setLoading(false);
+          },
+        );
+      },
+
+      (failure) => {
+        if (!active) return;
+
+        generation += 1;
+
+        stopCampaigns?.();
+        stopCampaigns = undefined;
+
+        // This callback receives Error, so use message.
+        console.error(
+          "Authentication listener failed:",
+          failure.message,
+        );
+
+        setUser(null);
+        setAuthReady(true);
+        setCampaigns([]);
+        setLoading(false);
+
+        setError(
+          "Could not check your sign-in session. " +
+            "Please refresh the page.",
+        );
       },
     );
 
     return () => {
       active = false;
-      unsubscribe();
+      generation += 1;
+
+      stopAuth();
+      stopCampaigns?.();
     };
-  }, [router]);
+  }, []);
 
-  async function startNewGame(): Promise<void> {
-    const user = auth.currentUser;
+  /*
+   * Calculate values from existing state instead of
+   * creating additional effects.
+   */
+  const selectedCountry = COUNTRY_CATALOGUE.find(
+    (country) => country.id === countryId,
+  );
 
-    if (!user) return;
+  const selectedSoldiers = selectedCountry
+    ? BattleRules.soldiersFromPopulation(
+        selectedCountry.population,
+      )
+    : 0;
 
-    setError("");
-    setLoading(true);
+  const wins = campaigns.filter(
+    (campaign) =>
+      campaign.status === "completed" &&
+      campaign.winnerId === "human",
+  ).length;
 
-    try {
-      const gameId = crypto.randomUUID();
+  const activeCount = campaigns.filter(
+    (campaign) => campaign.status === "active",
+  ).length;
 
-      const initialCountries =
-        GameEngine.generateInitialCountries();
+  const controlledCountries = campaigns.reduce(
+    (total, campaign) =>
+      total +
+      campaign.countries.filter(
+        (country) => country.ownerId === "human",
+      ).length,
+    0,
+  );
 
-      await GameRepository.createGame(
-        gameId,
-        user.uid,
-        initialCountries,
-      );
+  const visibleCampaigns = campaigns.filter(
+    (campaign) => {
+      if (
+        statusFilter !== "all" &&
+        campaign.status !== statusFilter
+      ) {
+        return false;
+      }
 
-      router.push(`/game/${gameId}`);
-    } catch {
-      setError(
-        "Could not create campaign. Please try again.",
-      );
-      setLoading(false);
-    }
-  }
+      const startingCountry =
+        campaign.participants.find(
+          (participant) =>
+            participant.kind === "human",
+        )?.name ?? "";
 
-  async function confirmDelete(): Promise<void> {
-    if (!pendingDelete || deleting) return;
-
-    const campaign = pendingDelete;
-
-    setDeleting(true);
-    setError("");
-
-    try {
-      await GameRepository.deleteFromHistory(
+      const searchable = [
         campaign.id,
-      );
+        startingCountry,
+        campaign.difficulty,
+        campaign.status,
+      ]
+        .join(" ")
+        .toLowerCase();
 
-      setGames((previous) =>
-        previous.filter(
-          (game) => game.id !== campaign.id,
-        ),
+      return searchable.includes(
+        search.trim().toLowerCase(),
       );
+    },
+  );
 
-      setDeleted(campaign);
-      setPendingDelete(null);
-    } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not delete campaign.",
-      );
-    } finally {
-      setDeleting(false);
+  async function createCampaign(): Promise<void> {
+    if (!user || creatingRef.current) {
+      return;
     }
-  }
 
-  async function undoDelete(): Promise<void> {
-    const user = auth.currentUser;
+    const ownerId = user.uid;
 
-    if (!deleted || deleting || !user) return;
-
-    setDeleting(true);
+    creatingRef.current = true;
+    setCreating(true);
     setError("");
 
+    /*
+     * Reuse the campaign ID when retrying creation
+     * with the same user and settings.
+     */
+    const signature =
+      `${ownerId}:${countryId}:${difficulty}`;
+
+    let attempt = creationAttempt.current;
+
+    if (
+      !attempt ||
+      attempt.signature !== signature
+    ) {
+      attempt = {
+        signature,
+        id: crypto.randomUUID(),
+      };
+
+      creationAttempt.current = attempt;
+    }
+
     try {
-      await GameRepository.restoreToHistory(
-        deleted.id,
-      );
+      await CampaignClient.create({
+        id: attempt.id,
+        selectedCountryId: countryId,
+        difficulty,
+      });
 
-      const savedGames =
-        await GameRepository.getUserGames(user.uid);
+      if (auth.currentUser?.uid !== ownerId) {
+        return;
+      }
 
-      setGames(savedGames);
-      setDeleted(null);
+      router.push(`/game/${attempt.id}`);
     } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not restore campaign.",
-      );
+      if (auth.currentUser?.uid === ownerId) {
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Could not create the campaign.",
+        );
+      }
     } finally {
-      setDeleting(false);
+      creatingRef.current = false;
+      setCreating(false);
     }
   }
 
   async function logout(): Promise<void> {
     try {
-      MusicPlayer.stop();
       await signOut(auth);
       router.push("/");
     } catch {
-      setError("Could not sign out. Please try again.");
+      setError(
+        "Could not sign out. Please try again.",
+      );
     }
   }
 
-  if (loading) {
+  if (!authReady) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-[#03050a] text-[#f4c430]">
-        Loading command center…
+      <main className={styles.shell}>
+        <p>Opening the command centre…</p>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className={styles.shell}>
+        <div className={styles.content}>
+          {error && (
+            <p
+              className={styles.error}
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
+
+          <section className={styles.panel}>
+            <p className={styles.eyebrow}>
+              GeoPolitics
+            </p>
+
+            <h1 className={styles.title}>
+              Enter the war room
+            </h1>
+
+            <p className={styles.muted}>
+              Sign in to create or resume your
+              campaigns. Shared campaign links remain
+              available to spectators.
+            </p>
+
+            <Link
+              href="/"
+              className={styles.link}
+            >
+              Sign in or create an account
+            </Link>
+          </section>
+        </div>
       </main>
     );
   }
 
   return (
-    <main className="war-room-page text-gray-100 p-4 md:p-8">
-  <div className="war-room-aurora" aria-hidden="true">
-    <div className="war-room-glow war-room-gold" />
-    <div className="war-room-glow war-room-blue" />
-  </div>
-
-  <div className="war-room-content max-w-5xl mx-auto pt-10">
-        <header className="flex justify-between items-center gap-4 mb-10 border-b border-yellow-500/30 pb-6">
+    <main className={styles.shell}>
+      <div className={styles.content}>
+        <header className={styles.header}>
           <div>
-            <h1 className="text-4xl md:text-5xl font-black text-[#f4c430]">
-              WAR ROOM
+            <p className={styles.eyebrow}>
+              GeoPolitics · Command centre
+            </p>
+
+            <h1 className={styles.title}>
+              Your war room
             </h1>
 
-            <p className="mt-3 text-sm text-gray-400">
-              Resume a campaign or launch a new invasion.
+            <p className={styles.muted}>
+              Ten nations. One world to conquer.
             </p>
           </div>
 
           <button
             type="button"
+            disabled={creating}
             onClick={() => void logout()}
-            className="px-4 py-3 rounded-lg border border-white/20 hover:border-red-400"
           >
-            Logout
+            Sign out
           </button>
         </header>
 
-        <button
-          type="button"
-          onClick={() => void startNewGame()}
-          className="w-full mb-8 p-5 rounded-xl bg-[#f4c430] text-black font-black text-lg hover:bg-yellow-300"
-        >
-          ⚔ Launch New Campaign
-        </button>
-
         {error && (
           <p
+            className={styles.error}
             role="alert"
-            className="mb-5 p-4 rounded-lg border border-red-400/40 bg-red-950/30 text-red-200"
           >
             {error}
           </p>
         )}
 
-        {deleted && (
-          <div
-            role="status"
-            className="mb-5 p-4 rounded-lg border border-white/20 bg-white/5"
-          >
-            <p className="break-all">
-              Campaign {deleted.id} removed from history.
-            </p>
-
-            <button
-              type="button"
-              disabled={deleting}
-              onClick={() => void undoDelete()}
-              className="mt-2 text-yellow-300 underline disabled:opacity-40"
-            >
-              Undo
-            </button>
+        <section
+          className={styles.stats}
+          aria-label="Your campaign statistics"
+        >
+          <div className={styles.stat}>
+            <span>Campaigns</span>
+            <strong>{campaigns.length}</strong>
           </div>
-        )}
 
-        {pendingDelete && (
-          <section
-            aria-label="Confirm campaign deletion"
-            className="mb-6 p-6 rounded-xl border border-red-400/40 bg-red-950/30"
-          >
-            <h2 className="font-bold break-all">
-              Delete campaign {pendingDelete.id} from history?
-            </h2>
+          <div className={styles.stat}>
+            <span>World victories</span>
+            <strong>{wins}</strong>
+          </div>
 
-            <p className="my-3 text-sm text-gray-300">
-              This removes it from your campaign list.
-              You can undo this after deleting.
+          <div className={styles.stat}>
+            <span>Active campaigns</span>
+            <strong>{activeCount}</strong>
+          </div>
+
+          <div className={styles.stat}>
+            <span>
+              Countries currently held across campaigns
+            </span>
+
+            <strong>{controlledCountries}</strong>
+          </div>
+        </section>
+
+        <div className={styles.split}>
+          <section className={styles.panel}>
+            <h2>Launch a campaign</h2>
+
+            <form
+              className={styles.form}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createCampaign();
+              }}
+            >
+              <label>
+                Starting country
+
+                <select
+                  value={countryId}
+                  disabled={creating}
+                  onChange={(event) =>
+                    setCountryId(event.target.value)
+                  }
+                >
+                  {COUNTRY_CATALOGUE.map(
+                    (country) => (
+                      <option
+                        key={country.id}
+                        value={country.id}
+                      >
+                        {country.name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
+
+              <label>
+                NPC difficulty
+
+                <select
+                  value={difficulty}
+                  disabled={creating}
+                  onChange={(event) =>
+                    setDifficulty(
+                      event.target.value as Difficulty,
+                    )
+                  }
+                >
+                  <option value="easy">
+                    Easy
+                  </option>
+
+                  <option value="normal">
+                    Normal
+                  </option>
+
+                  <option value="hard">
+                    Hard
+                  </option>
+                </select>
+              </label>
+
+              {selectedCountry && (
+                <div className={styles.notice}>
+                  <strong>
+                    {selectedCountry.name}
+                  </strong>
+
+                  <br />
+
+                  Population:{" "}
+                  {selectedCountry.population.toLocaleString(
+                    "en-ZA",
+                  )}
+
+                  <br />
+
+                  Starting soldiers: {selectedSoldiers}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className={styles.primary}
+                disabled={
+                  creating || !selectedCountry
+                }
+              >
+                {creating
+                  ? "Preparing your campaign…"
+                  : "Launch campaign"}
+              </button>
+            </form>
+          </section>
+
+          <section className={styles.panel}>
+            <h2>Campaign briefing</h2>
+
+            <p className={styles.muted}>
+              Choose your nation. Nine different
+              opponents are selected randomly, and
+              the first participant is chosen through
+              a randomized turn order.
             </p>
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                autoFocus
-                disabled={deleting}
-                onClick={() => void confirmDelete()}
-                className="px-4 py-3 rounded-lg bg-red-800 hover:bg-red-700 disabled:opacity-40"
-              >
-                {deleting
-                  ? "Deleting…"
-                  : "Delete campaign"}
-              </button>
+            <p className={styles.muted}>
+              You may start one attack per turn.
+              Continue rolling against that target,
+              conquer it, or stop the attack and end
+              your turn.
+            </p>
 
-              <button
-                type="button"
-                disabled={deleting}
-                onClick={() => setPendingDelete(null)}
-                className="px-4 py-3 rounded-lg border border-white/30 disabled:opacity-40"
-              >
-                Cancel
-              </button>
-            </div>
+            <p className={styles.muted}>
+              From round two, receive two soldiers
+              for every country you control and
+              allocate them where you choose.
+            </p>
+
+            <p className={styles.muted}>
+              Your campaign link allows visitors to
+              watch. Only you can submit moves or
+              advance its NPCs.
+            </p>
           </section>
-        )}
-
-        <h2 className="mb-4 font-bold text-[#f4c430]">
-          CAMPAIGN HISTORY
-        </h2>
-
-        {games.length === 0 && (
-          <p className="p-6 rounded-xl border border-white/10 bg-white/5 text-gray-400">
-            No campaigns found. Launch a new one to begin.
-          </p>
-        )}
-
-        <div className="space-y-4">
-          {games.map((game: Game) => (
-            <article
-              key={game.id}
-              className="flex flex-col md:flex-row justify-between md:items-center gap-5 p-6 rounded-xl border border-white/15 bg-[#0b1422]"
-            >
-              <div className="min-w-0">
-                <h3 className="font-bold text-[#f4c430] break-all">
-                  CAMPAIGN: {game.id.toUpperCase()}
-                </h3>
-
-                <p className="mt-2 text-sm text-gray-400">
-                  Turn {game.turnNumber} · Started{" "}
-                  {new Date(
-                    game.createdAt,
-                  ).toLocaleDateString()}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-3 shrink-0">
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(`/game/${game.id}`)
-                  }
-                  className="px-5 py-3 rounded-lg border border-yellow-400/40 text-yellow-300 hover:bg-yellow-400 hover:text-black"
-                >
-                  Resume
-                </button>
-
-                <button
-                  type="button"
-                  aria-label={
-                    `Delete campaign ${game.id}`
-                  }
-                  onClick={() => {
-                    setError("");
-                    setPendingDelete(game);
-                  }}
-                  className="px-5 py-3 rounded-lg border border-red-400/40 text-red-300 hover:bg-red-950"
-                >
-                  Delete
-                </button>
-              </div>
-            </article>
-          ))}
         </div>
+
+        <section className={styles.panel}>
+          <h2>Your campaigns</h2>
+
+          <div className={styles.split}>
+            <label className={styles.form}>
+              Search campaigns
+
+              <input
+                type="search"
+                value={search}
+                placeholder={
+                  "Country, difficulty, or campaign ID"
+                }
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
+              />
+            </label>
+
+            <label className={styles.form}>
+              Campaign status
+
+              <select
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(
+                    event.target.value as StatusFilter,
+                  )
+                }
+              >
+                <option value="all">
+                  All campaigns
+                </option>
+
+                <option value="active">
+                  Active
+                </option>
+
+                <option value="completed">
+                  Completed
+                </option>
+              </select>
+            </label>
+          </div>
+
+          {loading && (
+            <p className={styles.muted}>
+              Loading campaigns…
+            </p>
+          )}
+
+          {!loading &&
+            visibleCampaigns.length === 0 && (
+              <p className={styles.muted}>
+                No campaigns match this view.
+              </p>
+            )}
+
+          <div className={styles.campaigns}>
+            {visibleCampaigns.map((campaign) => {
+              const startingCountry =
+                campaign.participants.find(
+                  (participant) =>
+                    participant.kind === "human",
+                )?.name ?? "Campaign";
+
+              const owned =
+                campaign.countries.filter(
+                  (country) =>
+                    country.ownerId === "human",
+                ).length;
+
+              const result =
+                campaign.status === "completed"
+                  ? campaign.winnerId === "human"
+                    ? "Victory"
+                    : "NPC victory"
+                  : owned === 0
+                    ? "Eliminated · Watching"
+                    : "Active";
+
+              return (
+                <article
+                  key={campaign.id}
+                  className={styles.campaignCard}
+                >
+                  <div>
+                    <h3>{startingCountry}</h3>
+
+                    <span className={styles.pill}>
+                      {result}
+                    </span>
+
+                    <p className={styles.muted}>
+                      Round {campaign.round}
+                      {" · "}
+                      {campaign.difficulty}
+                      {" · "}
+                      {owned}/10 countries
+
+                      <br />
+
+                      Updated{" "}
+                      {new Date(
+                        campaign.updatedAt,
+                      ).toLocaleString("en-ZA")}
+                    </p>
+                  </div>
+
+                  <Link
+                    href={`/game/${campaign.id}`}
+                    className={styles.link}
+                  >
+                    {campaign.status === "completed"
+                      ? "View campaign"
+                      : "Open campaign"}
+                  </Link>
+                </article>
+              );
+            })}
+          </div>
+        </section>
       </div>
     </main>
   );

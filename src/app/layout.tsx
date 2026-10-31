@@ -6,7 +6,9 @@ import {
   Geist_Mono,
 } from "next/font/google";
 
-import AudioControls from "../components/AudioControls";
+import AudioControls from "@/components/AudioControls";
+import MusicDirector from "@/components/MusicDirector";
+import CampaignCorrespondent from "@/components/CampaignCorrespondent";
 
 import "./globals.css";
 
@@ -21,7 +23,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "GeoPolitics · Ten Nations. One Throne.",
+  title:
+    "GeoPolitics · Ten Nations. One Throne.",
+
   description:
     "A single-player world conquest strategy game.",
 };
@@ -34,10 +38,17 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={
+        `${geistSans.variable} ` +
+        `${geistMono.variable} h-full antialiased`
+      }
     >
       <body className="min-h-full flex flex-col">
+        <MusicDirector />
+
         {children}
+
+        <CampaignCorrespondent />
 
         <AudioControls />
       </body>

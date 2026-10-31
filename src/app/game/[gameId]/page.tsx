@@ -1,65 +1,488 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+
+import Image from "next/image";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+
+import {
+  onAuthStateChanged,
+  type User,
+} from "firebase/auth";
 
 import {
   collection,
   doc,
-  getDocs,
   onSnapshot,
-  updateDoc,
-  writeBatch,
+  orderBy,
+  query,
 } from "firebase/firestore";
 
-import { auth, db } from "../../../lib/firebase/config";
-import { GameEngine } from "../../../lib/engine/GameEngine";
-import { MusicPlayer } from "../../../lib/audio/MusicPlayer";
-import { SoundEngine } from "../../../lib/audio/SoundEngine";
+import { auth, db } from "@/lib/firebase/config";
+import { CampaignClient } from "@/lib/api/CampaignClient";
+import { MusicPlayer } from "@/lib/audio/MusicPlayer";
+import { SoundEngine } from "@/lib/audio/SoundEngine";
 
-import { RiskMap } from "../../../components/game/RiskMap";
-import { BattleScene } from "../../../components/game/BattleScene";
-import { BattleTimeline } from "../../../components/game/BattleTimeline";
-
-import {
-  HowToPlayDialog,
-  TransferDialog,
-} from "../../../components/game/GameDialogs";
+import { RiskMap } from "@/components/game/RiskMap";
+import { BattleScene } from "@/components/game/BattleScene";
+import { BattleTimeline } from "@/components/game/BattleTimeline";
+import { RollingDice } from "@/components/game/RollingDice";
 
 import {
-  countryFlag,
   getFactionColor,
   type MapBattleAnimation,
-} from "../../../components/game/MapTypes";
+} from "@/components/game/MapTypes";
 
-import type { Country } from "../../../types";
+import type { Country } from "@/types";
 
-type Phase = "player-turn" | "npc-turn" | "transfer";
+import type {
+  CampaignAction,
+  CampaignEvent,
+  CampaignState,
+} from "@/types/game-state";
 
-type RoundResult = {
-  atkRolls: number[];
-  defRolls: number[];
-  atkLosses: number;
-  defLosses: number;
-  conquered: boolean;
+import styles from "@/styles/Campaign.module.css";
+
+/* -------------------------------------------------------
+ * Types
+ * ----------------------------------------------------- */
+
+interface HistoryEvent {
+  revision: number;
+  actorId: string;
+  action: string;
+  message: string;
+  createdAt: number;
+
+  dice: CampaignEvent["dice"];
+
+  reason: string | null;
+  fromId: string | null;
+  toId: string | null;
+
+  afterState: CampaignState;
+}
+
+interface Playback {
+  event: HistoryEvent;
+  beforeState: CampaignState;
+  animation: MapBattleAnimation;
+}
+
+interface PresentationState {
+  live: CampaignState | null;
+  events: HistoryEvent[];
+  cursor: number | null;
+  playback: Playback | null;
+  replayRevision: number | null;
+  replayPlaying: boolean;
+}
+
+type PresentationAction =
+  | {
+      type: "campaign-received";
+      state: CampaignState;
+    }
+  | {
+      type: "history-received";
+      events: HistoryEvent[];
+    }
+  | {
+      type: "battle-finished";
+      revision: number;
+    }
+  | {
+      type: "select-history";
+      revision: number | null;
+    }
+  | {
+      type: "toggle-history-playback";
+    }
+  | {
+      type: "advance-history";
+    };
+
+const INITIAL_PRESENTATION: PresentationState = {
+  live: null,
+  events: [],
+  cursor: null,
+  playback: null,
+  replayRevision: null,
+  replayPlaying: false,
 };
 
-type TransferData = {
-  from: Country;
-  to: Country;
-  max: number;
-  reward: number;
-};
+/* -------------------------------------------------------
+ * Map and animation helpers
+ * ----------------------------------------------------- */
 
-type CommentaryResponse = {
-  commentary?: string;
-  source?: string;
-  error?: string;
-};
+function mapCountries(
+  state: CampaignState,
+): Country[] {
+  return state.countries.map((country) => ({
+    id: country.id,
+    name: country.name,
+    flag: country.flag,
+    soldiers: country.soldiers,
+    ownerId: country.ownerId,
+    isPlayer: country.ownerId === "human",
+    x: country.x,
+    y: country.y,
+  }));
+}
+
+function makeAnimation(
+  event: HistoryEvent,
+  beforeState: CampaignState,
+  active: boolean,
+): MapBattleAnimation | null {
+  if (
+    !event.dice ||
+    !event.fromId ||
+    !event.toId
+  ) {
+    return null;
+  }
+
+  const countries = mapCountries(beforeState);
+
+  const attacker = countries.find(
+    (country) => country.id === event.fromId,
+  );
+
+  const defender = countries.find(
+    (country) => country.id === event.toId,
+  );
+
+  if (!attacker || !defender) {
+    return null;
+  }
+
+  return {
+    id: event.revision,
+    fromId: attacker.id,
+    toId: defender.id,
+    active,
+    attackerColor: getFactionColor(attacker),
+    defenderColor: getFactionColor(defender),
+
+    dice: {
+      attacker: event.dice.attacker,
+      defender: event.dice.defender,
+      attackerLoss: event.dice.attackerLosses,
+      defenderLoss: event.dice.defenderLosses,
+    },
+  };
+}
+
+/* -------------------------------------------------------
+ * Presentation reducer
+ *
+ * Saved events determine the board and battle results.
+ * This reducer never generates dice or saves game moves.
+ * ----------------------------------------------------- */
+
+function processEventQueue(
+  model: PresentationState,
+): PresentationState {
+  if (
+    model.cursor === null ||
+    model.playback !== null ||
+    model.replayRevision !== null
+  ) {
+    return model;
+  }
+
+  let cursor = model.cursor;
+
+  for (const event of model.events) {
+    if (event.revision <= cursor) {
+      continue;
+    }
+
+    const previous = [...model.events]
+      .reverse()
+      .find(
+        (candidate) =>
+          candidate.revision <= cursor,
+      );
+
+    const beforeState =
+      previous?.afterState ?? event.afterState;
+
+    const animation = makeAnimation(
+      event,
+      beforeState,
+      true,
+    );
+
+    if (animation) {
+      return {
+        ...model,
+        cursor,
+        playback: {
+          event,
+          beforeState,
+          animation,
+        },
+      };
+    }
+
+    cursor = event.revision;
+  }
+
+  if (cursor === model.cursor) {
+    return model;
+  }
+
+  return {
+    ...model,
+    cursor,
+  };
+}
+
+function presentationReducer(
+  model: PresentationState,
+  action: PresentationAction,
+): PresentationState {
+  switch (action.type) {
+    case "campaign-received": {
+      return processEventQueue({
+        ...model,
+        live: action.state,
+      });
+    }
+
+    case "history-received": {
+      const events = [...action.events].sort(
+        (a, b) => a.revision - b.revision,
+      );
+
+      if (model.cursor === null) {
+        const latest = events[events.length - 1];
+
+        return {
+          ...model,
+          events,
+          cursor: latest?.revision ?? null,
+        };
+      }
+
+      return processEventQueue({
+        ...model,
+        events,
+      });
+    }
+
+    case "battle-finished": {
+      if (
+        model.playback?.event.revision !==
+        action.revision
+      ) {
+        return model;
+      }
+
+      return processEventQueue({
+        ...model,
+        cursor: action.revision,
+        playback: null,
+      });
+    }
+
+    case "select-history": {
+      if (model.playback !== null) {
+        return model;
+      }
+
+      if (
+        action.revision !== null &&
+        !model.events.some(
+          (event) =>
+            event.revision === action.revision,
+        )
+      ) {
+        return model;
+      }
+
+      return processEventQueue({
+        ...model,
+        replayRevision: action.revision,
+        replayPlaying: false,
+      });
+    }
+
+    case "toggle-history-playback": {
+      if (
+        model.playback !== null ||
+        model.events.length === 0
+      ) {
+        return model;
+      }
+
+      if (model.replayPlaying) {
+        return {
+          ...model,
+          replayPlaying: false,
+        };
+      }
+
+      const latest =
+        model.events[model.events.length - 1];
+
+      const startAgain =
+        model.replayRevision === null ||
+        model.replayRevision === latest.revision;
+
+      return {
+        ...model,
+        replayRevision: startAgain
+          ? model.events[0].revision
+          : model.replayRevision,
+        replayPlaying: true,
+      };
+    }
+
+    case "advance-history": {
+      if (
+        !model.replayPlaying ||
+        model.replayRevision === null
+      ) {
+        return model;
+      }
+
+      const index = model.events.findIndex(
+        (event) =>
+          event.revision === model.replayRevision,
+      );
+
+      const next = model.events[index + 1];
+
+      if (!next) {
+        return {
+          ...model,
+          replayPlaying: false,
+        };
+      }
+
+      return {
+        ...model,
+        replayRevision: next.revision,
+      };
+    }
+  }
+}
+
+/* -------------------------------------------------------
+ * Reinforcement allocation
+ * ----------------------------------------------------- */
+
+interface ReinforcementFormProps {
+  state: CampaignState;
+  enabled: boolean;
+
+  onAllocate: (
+    allocations: Record<string, number>,
+  ) => void;
+}
+
+function ReinforcementForm({
+  state,
+  enabled,
+  onAllocate,
+}: ReinforcementFormProps) {
+  const [allocations, setAllocations] = useState<
+    Record<string, number>
+  >({});
+
+  const owned = state.countries.filter(
+    (country) => country.ownerId === "human",
+  );
+
+  const total = Object.values(allocations).reduce(
+    (sum, amount) => sum + amount,
+    0,
+  );
+
+  return (
+    <section className={styles.panel}>
+      <h2>Allocate reinforcements</h2>
+
+      <p className={styles.muted}>
+        Place exactly {state.pendingReinforcements} new
+        soldiers among your countries.
+      </p>
+
+      <form
+        className={styles.form}
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAllocate(allocations);
+        }}
+      >
+        <fieldset
+          disabled={!enabled}
+          className={styles.form}
+        >
+          <div className={styles.allocationGrid}>
+            {owned.map((country) => (
+              <label key={country.id}>
+                {country.name}
+
+                <input
+                  type="number"
+                  min={0}
+                  max={state.pendingReinforcements}
+                  step={1}
+                  value={allocations[country.id] ?? 0}
+                  onChange={(event) => {
+                    const amount = Number(
+                      event.target.value,
+                    );
+
+                    setAllocations((previous) => ({
+                      ...previous,
+                      [country.id]: amount,
+                    }));
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+
+          <p className={styles.muted}>
+            Allocated: {total} /{" "}
+            {state.pendingReinforcements}
+          </p>
+
+          <button
+            type="submit"
+            className={styles.primary}
+            disabled={
+              total !== state.pendingReinforcements
+            }
+          >
+            Confirm allocation
+          </button>
+        </fieldset>
+      </form>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------
+ * Route wrapper
+ *
+ * A different campaign ID mounts a fresh screen.
+ * ----------------------------------------------------- */
 
 export default function GamePage() {
   const params = useParams();
-  const router = useRouter();
 
   const routeId = params.gameId;
 
@@ -68,57 +491,86 @@ export default function GamePage() {
       ? routeId
       : Array.isArray(routeId)
         ? routeId[0]
-        : undefined;
+        : "";
 
-  const [countries, setCountries] = useState<Country[]>([]);
-  const [round, setRound] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [pageError, setPageError] = useState("");
+  if (!gameId) {
+    return (
+      <main className={styles.shell}>
+        <p className={styles.error}>
+          Invalid campaign link.
+        </p>
 
-  const [phase, setPhase] = useState<Phase>("player-turn");
+        <Link
+          href="/lobby"
+          className={styles.link}
+        >
+          Return to the war room
+        </Link>
+      </main>
+    );
+  }
 
-  const [selectedAtk, setSelectedAtk] =
-    useState<string | null>(null);
+  return (
+    <CampaignScreen
+      key={`campaign-${gameId}`}
+      gameId={gameId}
+    />
+  );
+}
 
-  const [targetId, setTargetId] =
-    useState<string | null>(null);
+/* -------------------------------------------------------
+ * Main campaign screen
+ * ----------------------------------------------------- */
 
-  const [presenting, setPresenting] = useState(false);
+function CampaignScreen({
+  gameId,
+}: {
+  gameId: string;
+}) {
+  const [model, dispatch] = useReducer(
+    presentationReducer,
+    INITIAL_PRESENTATION,
+  );
 
-  const [attackedThisTurn, setAttackedThisTurn] =
-    useState(false);
+  const {
+    live,
+    events,
+    cursor,
+    playback,
+    replayRevision,
+    replayPlaying,
+  } = model;
 
-  const [fastForward, setFastForward] = useState(false);
-  const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
-  const [battleAnimation, setBattleAnimation] =
-    useState<MapBattleAnimation | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [fast, setFast] = useState(false);
+  const [npcPaused, setNpcPaused] = useState(false);
 
-  const [transferData, setTransferData] =
-    useState<TransferData | null>(null);
+  const [error, setError] = useState("");
+  const [fatal, setFatal] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
 
-  const [transferAmount, setTransferAmount] = useState(0);
+  const [fromId, setFromId] = useState("");
+  const [toId, setToId] = useState("");
 
-  const [messages, setMessages] = useState<string[]>([
-    "Select your country, then click an enemy country to attack.",
-  ]);
+  const [transferFrom, setTransferFrom] = useState("");
+  const [transferTo, setTransferTo] = useState("");
 
-  const busy = useRef(false);
+  const [transferAmount, setTransferAmount] =
+    useState(1);
+
   const mounted = useRef(true);
-  const fast = useRef(false);
-  const reinforced = useRef(false);
-  const sequence = useRef(0);
+  const inFlight = useRef(false);
 
-  const battleDone = useRef<(() => void) | null>(null);
+  const unlockTimer = useRef<
+    ReturnType<typeof setTimeout> | null
+  >(null);
 
-  const gameOutcome: "victory" | "defeat" | null =
-    countries.length === 0
-      ? null
-      : countries.every((country) => country.isPlayer)
-        ? "victory"
-        : countries.every((country) => !country.isPlayer)
-          ? "defeat"
-          : null;
+  /* -----------------------------------------------------
+   * Mount and cleanup
+   * --------------------------------------------------- */
 
   useEffect(() => {
     mounted.current = true;
@@ -126,1209 +578,1331 @@ export default function GamePage() {
     return () => {
       mounted.current = false;
 
-      battleDone.current?.();
-      battleDone.current = null;
+      if (unlockTimer.current) {
+        clearTimeout(unlockTimer.current);
+      }
 
       MusicPlayer.setScene("silent");
     };
   }, []);
 
-  useEffect(() => {
-    fast.current = fastForward;
-  }, [fastForward]);
+  /* -----------------------------------------------------
+   * Authentication subscription
+   * --------------------------------------------------- */
 
   useEffect(() => {
-    if (!gameId) return;
+    return onAuthStateChanged(
+      auth,
 
-    const unsubscribeGame = onSnapshot(
-      doc(db, "games", gameId),
+      (nextUser) => {
+        setUser(nextUser);
+        setAuthReady(true);
+      },
+
+      (failure) => {
+        console.error(
+          "Authentication listener failed:",
+          failure.message,
+        );
+
+        setUser(null);
+        setAuthReady(true);
+
+        setError(
+          "Could not verify your sign-in session. " +
+            "Please refresh or sign in again.",
+        );
+      },
+    );
+  }, []);
+
+  /* -----------------------------------------------------
+   * Campaign and history subscriptions
+   * --------------------------------------------------- */
+
+  useEffect(() => {
+    let active = true;
+
+    const stopCampaign = onSnapshot(
+      doc(db, "campaigns", gameId),
 
       (snapshot) => {
-        if (!mounted.current) return;
+        if (!active) return;
 
         if (!snapshot.exists()) {
-          setPageError("This campaign does not exist.");
-          setLoading(false);
+          setFatal(
+            "This campaign does not exist in the " +
+              "new campaign system.",
+          );
+
           return;
         }
 
-        const savedRound = snapshot.data().turnNumber;
+        const state = snapshot.data().state as
+          | CampaignState
+          | undefined;
 
-        setRound(
-          typeof savedRound === "number" &&
-            Number.isFinite(savedRound)
-            ? savedRound
-            : 1,
-        );
+        if (
+          !state ||
+          state.schemaVersion !== 1 ||
+          state.id !== gameId ||
+          !Array.isArray(state.countries) ||
+          state.countries.length !== 10
+        ) {
+          setFatal(
+            "This campaign has an unsupported format.",
+          );
+
+          return;
+        }
+
+        dispatch({
+          type: "campaign-received",
+          state,
+        });
       },
 
-      (error) => {
-        console.error("Game subscription failed:", error);
+      (failure) => {
+        if (!active) return;
 
-        if (mounted.current) {
-          setPageError("Could not load the campaign.");
-          setLoading(false);
-        }
+        console.error(
+          "Campaign listener failed:",
+          failure.code,
+        );
+
+        setFatal(
+          "Could not open the campaign. Check your " +
+            "connection and the published Firestore rules.",
+        );
       },
     );
 
-    const unsubscribeCountries = onSnapshot(
-      collection(db, "games", gameId, "countries"),
+    const historyQuery = query(
+      collection(
+        db,
+        "campaigns",
+        gameId,
+        "events",
+      ),
+      orderBy("revision", "asc"),
+    );
+
+    const stopEvents = onSnapshot(
+      historyQuery,
 
       (snapshot) => {
-        if (!mounted.current) return;
+        if (!active) return;
 
-        const nextCountries: Country[] =
-          snapshot.docs.map(
+        const history = snapshot.docs
+          .map(
             (item) =>
-              ({
-                ...item.data(),
-                id: item.id,
-              }) as Country,
+              item.data() as HistoryEvent,
+          )
+          .filter(
+            (event) =>
+              Number.isSafeInteger(event.revision) &&
+              event.afterState?.schemaVersion === 1,
           );
 
-        setCountries(nextCountries);
-        setLoading(false);
+        dispatch({
+          type: "history-received",
+          events: history,
+        });
       },
 
-      (error) => {
-        console.error("Country subscription failed:", error);
+      (failure) => {
+        if (!active) return;
 
-        if (mounted.current) {
-          setPageError("Could not load the countries.");
-          setLoading(false);
-        }
+        console.error(
+          "History listener failed:",
+          failure.code,
+        );
+
+        setFatal(
+          "Could not load campaign events. Check " +
+            "the published Firestore rules.",
+        );
       },
     );
 
     return () => {
-      unsubscribeGame();
-      unsubscribeCountries();
+      active = false;
+
+      stopCampaign();
+      stopEvents();
     };
   }, [gameId]);
 
-  function addLog(message: string): void {
-    if (!mounted.current) return;
+  const isOwner =
+    authReady &&
+    user !== null &&
+    live !== null &&
+    user.uid === live.playerId;
 
-    setMessages((previous) =>
-      [message, ...previous].slice(0, 60),
-    );
-  }
+  /* -----------------------------------------------------
+   * Battle audio
+   * --------------------------------------------------- */
 
-  function sleep(milliseconds: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      setTimeout(
-        resolve,
-        fast.current ? milliseconds * 0.34 : milliseconds,
-      );
-    });
-  }
-
-  /*
-   * Existing Day 1 reinforcement behavior.
-   * The ref prevents duplicate grants during this mounted
-   * session; refresh-safe grants require persisted turn state.
-   */
   useEffect(() => {
-    if (
-      loading ||
-      !gameId ||
-      gameOutcome ||
-      phase !== "player-turn" ||
-      reinforced.current ||
-      round < 2
-    ) {
+    if (!playback) {
+      MusicPlayer.setScene("silent");
       return;
     }
 
-    const owned = countries.filter(
-      (country) => country.isPlayer,
+    const humanAttack =
+      playback.event.actorId === "human";
+
+    MusicPlayer.setScene(
+      isOwner && humanAttack
+        ? "battle"
+        : "silent",
     );
 
-    if (owned.length === 0) return;
-
-    reinforced.current = true;
-
-    const currentGameId = gameId;
-
-    async function grantReinforcements(): Promise<void> {
-      try {
-        const total =
-          GameEngine.calculateReinforcements(owned.length);
-
-        const perCountry = Math.floor(total / owned.length);
-
-        let remainder =
-          total - perCountry * owned.length;
-
-        const batch = writeBatch(db);
-
-        for (const country of owned) {
-          const additional =
-            perCountry + (remainder > 0 ? 1 : 0);
-
-          if (remainder > 0) {
-            remainder -= 1;
-          }
-
-          batch.update(
-            doc(
-              db,
-              "games",
-              currentGameId,
-              "countries",
-              country.id,
-            ),
-            {
-              soldiers: country.soldiers + additional,
-            },
-          );
-        }
-
-        await batch.commit();
-
-        if (!mounted.current) return;
-
-        setMessages((previous) =>
-          [
-            `Reinforcements received: ${total} soldiers.`,
-            ...previous,
-          ].slice(0, 60),
-        );
-
-        SoundEngine.reinforce();
-      } catch (error: unknown) {
-        console.error("Reinforcement save failed:", error);
-
-        if (!mounted.current) return;
-
-        setMessages((previous) =>
-          [
-            "Could not save reinforcements. Refresh to inspect the saved board.",
-            ...previous,
-          ].slice(0, 60),
-        );
-      }
-    }
-
-    void grantReinforcements();
-  }, [
-    loading,
-    gameId,
-    gameOutcome,
-    phase,
-    round,
-    countries,
-  ]);
-
-  async function requestCommentary(
-    attacker: Country,
-    defender: Country,
-    result: RoundResult,
-  ): Promise<void> {
-    const requestId = ++sequence.current;
-
-    const placeholder =
-      `Reporting ${attacker.name} → ${defender.name}` +
-      ` · exchange ${requestId}…`;
-
-    addLog(placeholder);
-
-    let report =
-      `${attacker.name} lost ${result.atkLosses}; ` +
-      `${defender.name} lost ${result.defLosses}.`;
-
-    try {
-      const response = await fetch("/api/ai/commentary", {
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        signal: AbortSignal.timeout(18000),
-
-        body: JSON.stringify({
-          attacker: attacker.name,
-          defender: defender.name,
-
-          atkRolls: result.atkRolls,
-          defRolls: result.defRolls,
-
-          atkLosses: result.atkLosses,
-          defLosses: result.defLosses,
-
-          attackerOwner: attacker.isPlayer
-            ? "Your forces"
-            : `${attacker.name} command`,
-
-          defenderOwner: defender.isPlayer
-            ? "Your forces"
-            : `${defender.name} command`,
-        }),
-      });
-
-      const data: CommentaryResponse = await response.json();
-
-      if (
-        typeof data.commentary !== "string" ||
-        data.commentary.trim().length === 0
-      ) {
-        throw new Error(
-          data.error || "No commentary returned.",
-        );
-      }
-
-      const commentary = data.commentary.trim();
-
-      report =
-        response.ok && data.source === "groq"
-          ? `AI report: ${commentary}`
-          : `Battle report: ${commentary}`;
-    } catch (error: unknown) {
-      console.warn(
-        "Commentary unavailable:",
-        error instanceof Error ? error.message : error,
-      );
-    }
-
-    if (!mounted.current) return;
-
-    setMessages((previous) =>
-      previous.map((message) =>
-        message === placeholder ? report : message,
-      ),
-    );
-  }
-
-  /*
-   * BattleTimeline advances the aircraft, soldiers and dice
-   * together. Changing speed does not reroll the result.
-   */
-  async function showExchange(
-    attacker: Country,
-    defender: Country,
-  ): Promise<RoundResult> {
-    const result: RoundResult = GameEngine.resolveRound(
-      attacker.soldiers,
-      defender.soldiers,
-    );
-
-    const animationId = ++sequence.current;
-
-    const finished = new Promise<void>((resolve) => {
-      battleDone.current = resolve;
-    });
-
-    setBattleAnimation({
-      id: animationId,
-      fromId: attacker.id,
-      toId: defender.id,
-      active: true,
-
-      // The shared timeline handles speed.
-      fast: false,
-
-      attackerColor: getFactionColor(attacker),
-      defenderColor: getFactionColor(defender),
-
-      dice: {
-        attacker: result.atkRolls,
-        defender: result.defRolls,
-        attackerLoss: result.atkLosses,
-        defenderLoss: result.defLosses,
-      },
-    });
-
-    MusicPlayer.setScene("battle");
-    SoundEngine.aircraft();
     SoundEngine.diceRoll();
 
-    addLog(
-      `${attacker.name} [${result.atkRolls.join(", ")}] ` +
-        `versus ${defender.name} ` +
-        `[${result.defRolls.join(", ")}]. ` +
-        `Losses: ${result.atkLosses} / ${result.defLosses}.`,
+    return () => {
+      MusicPlayer.setScene("silent");
+    };
+  }, [playback, isOwner]);
+
+  /* -----------------------------------------------------
+   * Submit an action through the server
+   * --------------------------------------------------- */
+
+  const send = useCallback(
+    async (
+      action?: CampaignAction,
+    ): Promise<void> => {
+      if (
+        !live ||
+        auth.currentUser?.uid !== live.playerId ||
+        inFlight.current
+      ) {
+        return;
+      }
+
+      inFlight.current = true;
+
+      setBusy(true);
+      setError("");
+
+      try {
+        if (action) {
+          await CampaignClient.act(live, action);
+        } else {
+          await CampaignClient.advanceNpc(live);
+        }
+
+        /*
+         * The subscriptions receive the saved result.
+         * Do not generate a second local outcome.
+         */
+      } catch (failure) {
+        if (!mounted.current) return;
+
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "The move could not be completed.",
+        );
+
+        if (!action) {
+          setNpcPaused(true);
+        }
+      } finally {
+        if (mounted.current) {
+          unlockTimer.current = setTimeout(() => {
+            inFlight.current = false;
+
+            if (mounted.current) {
+              setBusy(false);
+            }
+          }, 350);
+        }
+      }
+    },
+    [live],
+  );
+
+  const caughtUp =
+    live !== null &&
+    cursor !== null &&
+    cursor === live.revision &&
+    playback === null;
+
+  const currentActorId = live
+    ? live.turnOrder[live.turnIndex]
+    : "";
+
+  const currentParticipant =
+    live?.participants.find(
+      (participant) =>
+        participant.id === currentActorId,
     );
 
-    try {
-      await finished;
-    } finally {
-      battleDone.current = null;
+  /* -----------------------------------------------------
+   * NPC simulation
+   * --------------------------------------------------- */
 
-      MusicPlayer.setScene("silent");
-
-      if (mounted.current) {
-        setBattleAnimation((previous) =>
-          previous?.id === animationId
-            ? {
-                ...previous,
-                active: false,
-              }
-            : previous,
-        );
-      }
-    }
-
-    return result;
-  }
-
-  function handleCountryClick(id: string): void {
+  useEffect(() => {
     if (
-      busy.current ||
-      phase !== "player-turn" ||
-      attackedThisTurn ||
-      gameOutcome
+      !live ||
+      !isOwner ||
+      !caughtUp ||
+      busy ||
+      npcPaused ||
+      replayRevision !== null ||
+      live.status !== "active" ||
+      currentParticipant?.kind !== "npc"
     ) {
       return;
     }
 
-    const country = countries.find(
+    const timer = setTimeout(
+      () => void send(),
+      fast ? 450 : 1100,
+    );
+
+    return () => clearTimeout(timer);
+  }, [
+    live,
+    isOwner,
+    caughtUp,
+    busy,
+    npcPaused,
+    replayRevision,
+    currentParticipant?.kind,
+    fast,
+    send,
+  ]);
+
+  /* -----------------------------------------------------
+   * Recorded history playback
+   * --------------------------------------------------- */
+
+  useEffect(() => {
+    if (
+      !replayPlaying ||
+      replayRevision === null
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      dispatch({
+        type: "advance-history",
+      });
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [
+    replayPlaying,
+    replayRevision,
+  ]);
+
+  /* -----------------------------------------------------
+   * Derived interface data
+   * --------------------------------------------------- */
+
+  const replayEvent =
+    replayRevision === null
+      ? undefined
+      : events.find(
+          (event) =>
+            event.revision === replayRevision,
+        );
+
+  const cursorEvent = events.find(
+    (event) => event.revision === cursor,
+  );
+
+  const viewState =
+    replayEvent?.afterState ??
+    playback?.beforeState ??
+    cursorEvent?.afterState ??
+    live;
+
+  const visibleCountries = viewState
+    ? mapCountries(viewState)
+    : [];
+
+  const owned =
+    live?.countries.filter(
+      (country) =>
+        country.ownerId === "human",
+    ) ?? [];
+
+  const enemies =
+    live?.countries.filter(
+      (country) =>
+        country.ownerId !== "human",
+    ) ?? [];
+
+  const canAct =
+    isOwner &&
+    caughtUp &&
+    !busy &&
+    replayRevision === null &&
+    live?.status === "active" &&
+    currentParticipant?.kind === "human";
+
+  const readyToCommand =
+    canAct &&
+    live?.pendingReinforcements === 0;
+
+  const canSelectAttack =
+    readyToCommand &&
+    !live?.activeAttack &&
+    !live?.attackUsed;
+
+  const selectedTransferSource = owned.find(
+    (country) =>
+      country.id === transferFrom,
+  );
+
+  const latestDiceEvent = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.dice !== null &&
+        event.revision <= (cursor ?? -1),
+    );
+
+  const idleBattleEvent =
+    replayRevision !== null
+      ? replayEvent?.dice
+        ? replayEvent
+        : undefined
+      : latestDiceEvent;
+
+  const idleBeforeState = idleBattleEvent
+    ? [...events]
+        .reverse()
+        .find(
+          (event) =>
+            event.revision <
+            idleBattleEvent.revision,
+        )?.afterState ??
+      idleBattleEvent.afterState
+    : null;
+
+  const idleAnimation =
+    idleBattleEvent && idleBeforeState
+      ? makeAnimation(
+          idleBattleEvent,
+          idleBeforeState,
+          false,
+        )
+      : null;
+
+  const shownAnimation =
+    playback?.animation ?? idleAnimation;
+
+  const shownBattleEvent =
+    playback?.event ?? idleBattleEvent;
+
+  const battleCountries = playback
+    ? mapCountries(playback.beforeState)
+    : idleBeforeState
+      ? mapCountries(idleBeforeState)
+      : visibleCountries;
+
+  const visibleHumanCountries =
+    viewState?.countries.filter(
+      (country) =>
+        country.ownerId === "human",
+    ) ?? [];
+
+  const visibleHumanSoldiers =
+    visibleHumanCountries.reduce(
+      (sum, country) =>
+        sum + country.soldiers,
+      0,
+    );
+
+  const participantsRemaining = viewState
+    ? new Set(
+        viewState.countries.map(
+          (country) => country.ownerId,
+        ),
+      ).size
+    : 0;
+
+  /* -----------------------------------------------------
+   * Interface handlers
+   * --------------------------------------------------- */
+
+  function selectCountry(id: string): void {
+    if (!canSelectAttack || !live) {
+      return;
+    }
+
+    const country = live.countries.find(
       (item) => item.id === id,
     );
 
     if (!country) return;
 
-    SoundEngine.click();
-
-    if (country.isPlayer) {
-      if (country.soldiers < 2) {
-        addLog("You need at least two soldiers to attack.");
-        return;
-      }
-
-      setSelectedAtk(country.id);
-      setTargetId(null);
-
-      addLog(
-        `${country.name} selected. Click an enemy country to attack.`,
-      );
-
-      return;
-    }
-
-    if (!selectedAtk) {
-      addLog("Select one of your own countries first.");
-      return;
-    }
-
-    void confirmAttack(selectedAtk, country.id);
-  }
-
-  async function readCountries(): Promise<Country[]> {
-    if (!gameId) return [];
-
-    const snapshot = await getDocs(
-      collection(db, "games", gameId, "countries"),
-    );
-
-    return snapshot.docs.map(
-      (item) =>
-        ({
-          ...item.data(),
-          id: item.id,
-        }) as Country,
-    );
-  }
-
-  async function runNpcTurns(): Promise<void> {
-    if (!gameId || !mounted.current) return;
-
-    setPhase("npc-turn");
-    addLog("NPC nations are taking their turns.");
-
-    const initialBoard = await readCountries();
-
-    const owners: string[] = [
-      ...new Set<string>(
-        initialBoard
-          .filter((country) => !country.isPlayer)
-          .map((country) => country.ownerId),
-      ),
-    ];
-
-    for (const ownerId of owners) {
-      if (!mounted.current) return;
-
-      const board = await readCountries();
-
-      if (
-        board.length === 0 ||
-        board.every((country) => country.isPlayer) ||
-        board.every((country) => !country.isPlayer)
-      ) {
-        break;
-      }
-
-      const owned = board.filter(
-        (country) =>
-          !country.isPlayer &&
-          country.ownerId === ownerId,
-      );
-
-      if (owned.length === 0) continue;
-
-      const move = GameEngine.pickNpcTarget(owned, board);
-
-      if (!move) {
-        await sleep(80);
-        continue;
-      }
-
-      addLog(
-        `${move.attacker.name} attacks ${move.defender.name}.`,
-      );
-
-      const result = await showExchange(
-        move.attacker,
-        move.defender,
-      );
-
-      if (!mounted.current) return;
-
-      const attackerRemaining =
-        move.attacker.soldiers - result.atkLosses;
-
-      const defenderRemaining =
-        move.defender.soldiers - result.defLosses;
-
-      const batch = writeBatch(db);
-
-      if (result.conquered) {
-        const reward =
-          GameEngine.calculateConquestReward(
-            move.defender.soldiers,
-          );
-
-        batch.update(
-          doc(
-            db,
-            "games",
-            gameId,
-            "countries",
-            move.attacker.id,
-          ),
-          {
-            soldiers: 1,
-          },
-        );
-
-        batch.update(
-          doc(
-            db,
-            "games",
-            gameId,
-            "countries",
-            move.defender.id,
-          ),
-          {
-            soldiers:
-              reward +
-              Math.max(0, attackerRemaining - 1),
-
-            isPlayer: false,
-            ownerId,
-          },
-        );
-      } else {
-        batch.update(
-          doc(
-            db,
-            "games",
-            gameId,
-            "countries",
-            move.attacker.id,
-          ),
-          {
-            soldiers: attackerRemaining,
-          },
-        );
-
-        batch.update(
-          doc(
-            db,
-            "games",
-            gameId,
-            "countries",
-            move.defender.id,
-          ),
-          {
-            soldiers: defenderRemaining,
-          },
-        );
-      }
-
-      await batch.commit();
-
-      if (!mounted.current) return;
-
-      void requestCommentary(
-        move.attacker,
-        move.defender,
-        result,
-      );
-
-      await sleep(120);
-    }
-
-    if (!mounted.current) return;
-
-    const finalBoard = await readCountries();
-
-    if (!mounted.current) return;
-
-    const finished =
-      finalBoard.length > 0 &&
-      (
-        finalBoard.every((country) => country.isPlayer) ||
-        finalBoard.every((country) => !country.isPlayer)
-      );
-
-    if (finished) return;
-
-    const nextRound = round + 1;
-
-    await updateDoc(doc(db, "games", gameId), {
-      turnNumber: nextRound,
-    });
-
-    if (!mounted.current) return;
-
-    reinforced.current = false;
-
-    setRound(nextRound);
-    setPhase("player-turn");
-
-    addLog(`Round ${nextRound}. Your turn.`);
-  }
-
-  async function finishTurn(): Promise<void> {
-    await runNpcTurns();
-
-    if (mounted.current) {
-      setAttackedThisTurn(false);
-    }
-  }
-
-  async function executeAttack(
-    attacker: Country,
-    defender: Country,
-  ): Promise<void> {
-    if (!gameId) return;
-
-    const result = await showExchange(attacker, defender);
-
-    if (!mounted.current) return;
-
-    const attackerRemaining =
-      attacker.soldiers - result.atkLosses;
-
-    const defenderRemaining =
-      defender.soldiers - result.defLosses;
-
-    const batch = writeBatch(db);
-
-    batch.update(
-      doc(db, "games", gameId, "countries", attacker.id),
-      {
-        soldiers: attackerRemaining,
-      },
-    );
-
-    if (result.conquered) {
-      const reward =
-        GameEngine.calculateConquestReward(
-          defender.soldiers,
-        );
-
-      batch.update(
-        doc(db, "games", gameId, "countries", defender.id),
-        {
-          soldiers: reward,
-          isPlayer: true,
-          ownerId:
-            auth.currentUser?.uid || attacker.ownerId,
-        },
-      );
-
-      await batch.commit();
-
-      if (!mounted.current) return;
-
-      void requestCommentary(attacker, defender, result);
-
-      setTransferData({
-        from: {
-          ...attacker,
-          soldiers: attackerRemaining,
-        },
-
-        to: {
-          ...defender,
-          soldiers: reward,
-        },
-
-        max: Math.max(0, attackerRemaining - 1),
-        reward,
-      });
-
-      setTransferAmount(0);
-      setPhase("transfer");
-
-      addLog(
-        `${defender.name} conquered. ` +
-          `Reward: ${reward}. Choose additional troops to transfer.`,
-      );
-
-      SoundEngine.victory();
+    if (country.ownerId === "human") {
+      setFromId(country.id);
     } else {
-      batch.update(
-        doc(db, "games", gameId, "countries", defender.id),
-        {
-          soldiers: defenderRemaining,
-        },
-      );
-
-      await batch.commit();
-
-      if (!mounted.current) return;
-
-      void requestCommentary(attacker, defender, result);
-
-      await finishTurn();
+      setToId(country.id);
     }
   }
 
-  async function confirmAttack(
-    attackerId: string | null = selectedAtk,
-    defenderId: string | null = targetId,
-  ): Promise<void> {
-    if (
-      busy.current ||
-      phase !== "player-turn" ||
-      attackedThisTurn ||
-      gameOutcome
-    ) {
-      return;
-    }
-
-    const attacker = countries.find(
-      (country) => country.id === attackerId,
-    );
-
-    const defender = countries.find(
-      (country) => country.id === defenderId,
-    );
-
-    if (
-      !attacker ||
-      !defender ||
-      !attacker.isPlayer ||
-      defender.isPlayer ||
-      attacker.soldiers < 2
-    ) {
-      return;
-    }
-
-    busy.current = true;
-
-    setPresenting(true);
-    setAttackedThisTurn(true);
-    setSelectedAtk(null);
-    setTargetId(null);
+  async function copyLink(): Promise<void> {
+    const url =
+      `${window.location.origin}/game/${gameId}`;
 
     try {
-      await executeAttack(attacker, defender);
-    } catch (error: unknown) {
-      console.error("Attack failed:", error);
-
-      addLog(
-        "Could not complete the move. Refresh to inspect the saved board.",
+      await navigator.clipboard.writeText(url);
+      setShareMessage("Campaign link copied.");
+    } catch {
+      setShareMessage(
+        "Copy the campaign address from your " +
+          "browser's address bar.",
       );
-    } finally {
-      busy.current = false;
-
-      MusicPlayer.setScene("silent");
-
-      if (mounted.current) {
-        setPresenting(false);
-      }
     }
   }
 
-  async function confirmTransfer(): Promise<void> {
-    if (
-      !gameId ||
-      !transferData ||
-      busy.current ||
-      phase !== "transfer"
-    ) {
-      return;
-    }
+  /* -----------------------------------------------------
+   * Error and loading screens
+   * --------------------------------------------------- */
 
-    if (
-      !Number.isInteger(transferAmount) ||
-      transferAmount < 0 ||
-      transferAmount > transferData.max
-    ) {
-      addLog(
-        "Choose a valid transfer and leave one soldier behind.",
-      );
-      return;
-    }
-
-    busy.current = true;
-    setPresenting(true);
-
-    try {
-      const { from, to, reward } = transferData;
-
-      const batch = writeBatch(db);
-
-      batch.update(
-        doc(db, "games", gameId, "countries", from.id),
-        {
-          soldiers: from.soldiers - transferAmount,
-        },
-      );
-
-      batch.update(
-        doc(db, "games", gameId, "countries", to.id),
-        {
-          soldiers: reward + transferAmount,
-        },
-      );
-
-      await batch.commit();
-
-      if (!mounted.current) return;
-
-      addLog(
-        `Transferred ${transferAmount} soldiers to ${to.name}.`,
-      );
-
-      setTransferData(null);
-
-      await finishTurn();
-    } catch (error: unknown) {
-      console.error("Transfer or end-turn failed:", error);
-
-      addLog(
-        "Could not complete the transfer or end the turn. Refresh to inspect the saved board.",
-      );
-    } finally {
-      busy.current = false;
-
-      if (mounted.current) {
-        setPresenting(false);
-      }
-    }
-  }
-
-  async function skipTurn(): Promise<void> {
-    if (
-      busy.current ||
-      phase !== "player-turn" ||
-      attackedThisTurn ||
-      gameOutcome
-    ) {
-      return;
-    }
-
-    busy.current = true;
-
-    setPresenting(true);
-    setSelectedAtk(null);
-    setTargetId(null);
-
-    addLog("You skip your attack.");
-
-    try {
-      await finishTurn();
-    } catch (error: unknown) {
-      console.error("Skip turn failed:", error);
-      addLog("Could not finish the turn.");
-    } finally {
-      busy.current = false;
-
-      MusicPlayer.setScene("silent");
-
-      if (mounted.current) {
-        setPresenting(false);
-      }
-    }
-  }
-
-  if (!gameId) {
+  if (fatal) {
     return (
-      <main className="day1-outcome">
-        <h1>Invalid campaign link</h1>
+      <main className={styles.shell}>
+        <div className={styles.content}>
+          <p
+            className={styles.error}
+            role="alert"
+          >
+            {fatal}
+          </p>
 
-        <button
-          type="button"
-          onClick={() => router.push("/lobby")}
-        >
-          Return to War Room
-        </button>
-      </main>
-    );
-  }
-
-  if (loading) {
-    return (
-      <main className="day1-loading">
-        Loading world…
-      </main>
-    );
-  }
-
-  if (pageError) {
-    return (
-      <main className="day1-outcome">
-        <h1>Could not open campaign</h1>
-        <p>{pageError}</p>
-
-        <button
-          type="button"
-          onClick={() => router.push("/lobby")}
-        >
-          Return to War Room
-        </button>
+          <Link
+            href="/lobby"
+            className={styles.link}
+          >
+            Return to the war room
+          </Link>
+        </div>
       </main>
     );
   }
 
   if (
-    gameOutcome &&
-    phase !== "transfer" &&
-    !presenting &&
-    !battleAnimation?.active
+    !live ||
+    !viewState ||
+    cursor === null
   ) {
     return (
-      <main className="day1-outcome">
-        <h1>
-          {gameOutcome === "victory"
-            ? "Victory"
-            : "Defeat"}
-        </h1>
-
-        <button
-          type="button"
-          onClick={() => router.push("/lobby")}
-        >
-          Return to War Room
-        </button>
+      <main className={styles.shell}>
+        <p>
+          Loading the campaign and its saved history…
+        </p>
       </main>
     );
   }
 
-  const controlsDisabled =
-    presenting ||
-    phase !== "player-turn" ||
-    attackedThisTurn;
-
-  const selectedCountry = countries.find(
-    (country) => country.id === selectedAtk,
+  const winner = viewState.participants.find(
+    (participant) =>
+      participant.id === viewState.winnerId,
   );
 
-  const targetCountry = countries.find(
-    (country) => country.id === targetId,
-  );
+  /* -----------------------------------------------------
+   * Main interface
+   * --------------------------------------------------- */
 
   return (
-    <main className="day1-game">
-      <div className="day1-container">
-        <HowToPlayDialog
-          open={showHowToPlay}
-          onClose={() => setShowHowToPlay(false)}
-        />
-
-        <TransferDialog
-          data={
-            phase === "transfer"
-              ? transferData
-              : null
-          }
-          amount={transferAmount}
-          busy={presenting}
-          onChange={setTransferAmount}
-          onConfirm={() => {
-            void confirmTransfer();
-          }}
-        />
-
-        {battleAnimation?.active && (
-          <BattleTimeline
-            key={battleAnimation.id}
-            battleId={battleAnimation.id}
-            fast={fastForward}
-            onImpact={() => {
-              const result = battleAnimation.dice;
-
-              if (
-                result &&
-                result.attackerLoss +
-                  result.defenderLoss >
-                  0
-              ) {
-                SoundEngine.explosion();
-              }
-            }}
-            onComplete={() => {
-              battleDone.current?.();
-            }}
-          />
-        )}
-
-        <header className="day1-header">
+    <main className={styles.shell}>
+      <div className={styles.content}>
+        <header className={styles.header}>
           <div>
-            <h1>World Command · Round {round}</h1>
+            <p className={styles.eyebrow}>
+              GeoPolitics · World command
+            </p>
 
-            <p className="day1-subtitle">
-              {phase === "transfer"
-                ? "Choose your conquest transfer"
-                : phase === "npc-turn"
-                  ? "NPC nations are taking their turns"
-                  : presenting
-                    ? "Resolving your attack…"
-                    : "Select your country, then click an enemy to attack"}
+            <h1 className={styles.title}>
+              Round {viewState.round}
+            </h1>
+
+            <p className={styles.muted}>
+              {replayRevision !== null
+                ? `History · Event ${replayRevision}`
+                : live.status === "completed"
+                  ? "Campaign complete"
+                  : `${
+                      currentParticipant?.name ??
+                      "Participant"
+                    }'s turn`}
             </p>
           </div>
 
-          <div className="day1-actions">
+          <div className={styles.toolbar}>
+            <Link
+              href="/lobby"
+              className={styles.link}
+            >
+              War room
+            </Link>
+
             <button
               type="button"
-              disabled={
-                presenting ||
-                phase === "transfer"
-              }
-              onClick={() => setShowHowToPlay(true)}
+              onClick={() => void copyLink()}
             >
-              How to play
+              Share campaign
             </button>
 
             <button
               type="button"
-              aria-pressed={fastForward}
+              aria-pressed={fast}
               onClick={() =>
-                setFastForward((previous) => !previous)
+                setFast((value) => !value)
               }
             >
-              Speed: {fastForward ? "2.5×" : "1×"}
-            </button>
-
-            <button
-              type="button"
-              disabled={controlsDisabled}
-              onClick={() => void skipTurn()}
-            >
-              Skip turn
-            </button>
-
-            <button
-              type="button"
-              onClick={() => router.push("/lobby")}
-            >
-              Exit
+              NPC speed: {fast ? "2.5×" : "1×"}
             </button>
           </div>
         </header>
 
-        <nav
-          className="game-country-strip"
-          aria-label="Countries and soldier counts"
+        {shareMessage && (
+          <p
+            className={styles.notice}
+            role="status"
+          >
+            {shareMessage}
+          </p>
+        )}
+
+        {error && (
+          <div
+            className={styles.error}
+            role="alert"
+          >
+            <p>{error}</p>
+
+            {npcPaused && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setNpcPaused(false);
+                }}
+              >
+                Retry NPC simulation
+              </button>
+            )}
+          </div>
+        )}
+
+        {!isOwner && authReady && (
+          <div className={styles.notice}>
+            Spectator mode: you can watch the board
+            and history, but cannot submit moves.
+
+            {!user && (
+              <>
+                {" "}
+                <Link
+                  href="/"
+                  className={styles.link}
+                >
+                  Sign in to start your own campaign
+                </Link>
+              </>
+            )}
+          </div>
+        )}
+
+        {isOwner &&
+          owned.length === 0 &&
+          live.status === "active" && (
+            <p className={styles.notice}>
+              You have been eliminated. You can
+              continue watching the remaining
+              nations compete.
+            </p>
+          )}
+
+        {viewState.status === "completed" && (
+          <p
+            className={styles.success}
+            role="status"
+          >
+            {viewState.winnerId === "human"
+              ? "World conquered. Your campaign is victorious."
+              : `${
+                  winner?.name ?? "An NPC"
+                } controls all ten countries.`}
+          </p>
+        )}
+
+        {replayRevision !== null && (
+          <p className={styles.notice}>
+            Viewing recorded history. Gameplay
+            controls and owner-driven NPC simulation
+            are paused in this tab until you return
+            to live play.
+          </p>
+        )}
+
+        {isOwner &&
+          live.status === "active" &&
+          currentParticipant?.kind === "npc" &&
+          replayRevision === null && (
+            <p
+              className={styles.notice}
+              role="status"
+            >
+              NPC turns are being simulated.
+              Your controls become available when
+              your turn begins. Use NPC speed to
+              accelerate the visible moves.
+            </p>
+          )}
+
+        <section
+          className={styles.stats}
+          aria-label="Campaign statistics"
         >
-          {countries.map((country: Country) => (
+          <div className={styles.stat}>
+            <span>Your countries</span>
+            <strong>
+              {visibleHumanCountries.length}/10
+            </strong>
+          </div>
+
+          <div className={styles.stat}>
+            <span>Your soldiers</span>
+            <strong>
+              {visibleHumanSoldiers}
+            </strong>
+          </div>
+
+          <div className={styles.stat}>
+            <span>Participants remaining</span>
+            <strong>
+              {participantsRemaining}
+            </strong>
+          </div>
+
+          <div className={styles.stat}>
+            <span>Difficulty</span>
+            <strong>
+              {viewState.difficulty}
+            </strong>
+          </div>
+        </section>
+
+        <nav
+          className={styles.countryGrid}
+          aria-label="All countries and soldier counts"
+        >
+          {visibleCountries.map((country) => (
             <button
-              key={country.id}
+              key={`country-${country.id}`}
               type="button"
-              disabled={controlsDisabled}
-              className={
-                selectedAtk === country.id
-                  ? "selected"
-                  : targetId === country.id
-                    ? "targeted"
-                    : ""
-              }
+              className={[
+                styles.countryCard,
+
+                fromId === country.id ||
+                toId === country.id
+                  ? styles.selected
+                  : "",
+              ].join(" ")}
               style={{
-                borderBottomColor:
-                  getFactionColor(country),
+                borderBottom:
+                  `3px solid ${getFactionColor(country)}`,
               }}
-              onClick={() =>
-                handleCountryClick(country.id)
-              }
               aria-label={
                 `${country.name}: ` +
-                `${country.soldiers} soldiers`
+                `${country.soldiers} soldiers; ` +
+                (country.isPlayer
+                  ? "your country"
+                  : "opponent")
+              }
+              aria-disabled={!canSelectAttack}
+              onClick={() =>
+                selectCountry(country.id)
               }
             >
-              <span
-                className="generated-flag"
-                aria-hidden="true"
-              >
-                {countryFlag(country.id)}
+              <Image
+                src={
+                  "https://flagcdn.com/w80/" +
+                  `${country.id.toLowerCase()}.png`
+                }
+                alt=""
+                width={25}
+                height={17}
+                unoptimized
+                className={styles.flag}
+              />
+
+              <span>
+                {country.name}
+
+                <small>
+                  {country.isPlayer
+                    ? "Your control"
+                    : "Opponent"}
+                </small>
               </span>
 
-              <span>{country.name}</span>
-
-              <strong>{country.soldiers}</strong>
+              <strong>
+                {country.soldiers}
+              </strong>
             </button>
           ))}
         </nav>
 
-        <section
-          className="attack-command"
-          aria-label="Attack selection"
-        >
-          <label>
-            Attack from
-
-            <select
-              aria-label="Attacking country"
-              value={selectedAtk || ""}
-              disabled={controlsDisabled}
-              onChange={(event) => {
-                setSelectedAtk(
-                  event.target.value || null,
-                );
-
-                setTargetId(null);
-              }}
-            >
-              <option value="">
-                Choose your country
-              </option>
-
-              {countries
-                .filter(
-                  (country) =>
-                    country.isPlayer &&
-                    country.soldiers >= 2,
-                )
-                .map((country) => (
-                  <option
-                    key={country.id}
-                    value={country.id}
-                  >
-                    {country.name} · {country.soldiers}
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <label>
-            Target
-
-            <select
-              aria-label="Defending country"
-              value={targetId || ""}
-              disabled={
-                controlsDisabled || !selectedAtk
-              }
-              onChange={(event) =>
-                setTargetId(
-                  event.target.value || null,
-                )
-              }
-            >
-              <option value="">
-                Choose an enemy
-              </option>
-
-              {countries
-                .filter(
-                  (country) => !country.isPlayer,
-                )
-                .map((country) => (
-                  <option
-                    key={country.id}
-                    value={country.id}
-                  >
-                    {country.name} · {country.soldiers}
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <p>
-            {selectedCountry
-              ? (
-                  `${selectedCountry.name} → ` +
-                  (
-                    targetCountry?.name ||
-                    "click an enemy on the map"
-                  )
-                )
-              : "Select your country on the map or use the dropdown."}
-          </p>
-
-          <button
-            type="button"
-            disabled={
-              controlsDisabled ||
-              !selectedCountry ||
-              !targetCountry
-            }
-            onClick={() => void confirmAttack()}
-          >
-            Attack selected target
-          </button>
-
-          <button
-            type="button"
-            disabled={controlsDisabled}
-            onClick={() => {
-              setSelectedAtk(null);
-              setTargetId(null);
-            }}
-          >
-            Clear selection
-          </button>
-        </section>
-
-        <div className="day1-battle-layout">
-          <div>
+        <div className={styles.warLayout}>
+          <div className={styles.mapWrap}>
             <RiskMap
-              countries={countries}
-              selectedAtk={selectedAtk}
-              targetId={targetId}
-              onCountryClick={handleCountryClick}
-              battleAnimation={battleAnimation}
+              countries={visibleCountries}
+              selectedAtk={
+                canSelectAttack
+                  ? fromId || null
+                  : null
+              }
+              targetId={
+                canSelectAttack
+                  ? toId || null
+                  : null
+              }
+              onCountryClick={selectCountry}
+              battleAnimation={
+                playback?.animation ?? null
+              }
             />
 
-            {battleAnimation && (
-              <BattleScene
-                animation={battleAnimation}
-                countries={countries}
+            {playback && (
+              <BattleTimeline
+                key={
+                  `timeline-${playback.event.revision}`
+                }
+                battleId={
+                  playback.event.revision
+                }
+                fast={
+                  playback.event.actorId !==
+                    "human" && fast
+                }
+                onImpact={() => {
+                  const dice =
+                    playback.event.dice;
+
+                  if (
+                    dice &&
+                    dice.attackerLosses +
+                      dice.defenderLosses >
+                      0
+                  ) {
+                    SoundEngine.explosion();
+                  }
+                }}
+                onComplete={() => {
+                  dispatch({
+                    type: "battle-finished",
+                    revision:
+                      playback.event.revision,
+                  });
+                }}
               />
+            )}
+
+            {shownAnimation &&
+              shownBattleEvent &&
+              (shownBattleEvent.actorId ===
+              "human" ? (
+                <BattleScene
+                  key={
+                    `human-battle-${shownAnimation.id}`
+                  }
+                  animation={shownAnimation}
+                  countries={battleCountries}
+                />
+              ) : (
+                <section
+                  key={
+                    `npc-battle-${shownAnimation.id}`
+                  }
+                  data-battle-id={
+                    shownAnimation.id
+                  }
+                  className={
+                    shownAnimation.active
+                      ? "is-running"
+                      : "is-resolved"
+                  }
+                >
+                  <p className={styles.muted}>
+                    NPC battle · Recorded dice results
+                  </p>
+
+                  {shownAnimation.dice && (
+                    <RollingDice
+                      dice={
+                        shownAnimation.dice
+                      }
+                    />
+                  )}
+                </section>
+              ))}
+
+            {isOwner && (
+              <div className={styles.controlGrid}>
+                <section className={styles.panel}>
+                  <h2>Attack command</h2>
+
+                  {live.activeAttack && currentParticipant?.kind === "human" ? (
+                    <div className={styles.stack}>
+                      <p className={styles.muted}>
+                        This is one attack against your chosen target.
+                        Roll another exchange against
+                        the same target, or stop and
+                        end your turn.
+                      </p>
+
+                      <button
+                        type="button"
+                        className={styles.primary}
+                        disabled={!readyToCommand}
+                        onClick={() =>
+                          void send({
+                            type: "roll",
+                          })
+                        }
+                      >
+                        Roll battle dice
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.danger}
+                        disabled={!readyToCommand}
+                        onClick={() =>
+                          void send({
+                            type: "stop-attack",
+                          })
+                        }
+                      >
+                        Stop attack and end turn
+                      </button>
+                    </div>
+                  ) : (
+                    <form
+                      className={styles.form}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+
+                        void send({
+                          type: "start-attack",
+                          fromId,
+                          toId,
+                        });
+                      }}
+                    >
+                      <fieldset
+                        disabled={!canSelectAttack}
+                        className={styles.form}
+                      >
+                        <label>
+                          Attack from
+
+                          <select
+                            value={fromId}
+                            onChange={(event) =>
+                              setFromId(
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option value="">
+                              Choose your country
+                            </option>
+
+                            {owned
+                              .filter(
+                                (country) =>
+                                  country.soldiers >= 2,
+                              )
+                              .map((country) => (
+                                <option
+                                  key={country.id}
+                                  value={country.id}
+                                >
+                                  {country.name}
+                                  {" · "}
+                                  {country.soldiers}
+                                  {" soldiers"}
+                                </option>
+                              ))}
+                          </select>
+                        </label>
+
+                        <label>
+                          Target
+
+                          <select
+                            value={toId}
+                            onChange={(event) =>
+                              setToId(
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option value="">
+                              Choose an opponent
+                            </option>
+
+                            {enemies.map((country) => (
+                              <option
+                                key={country.id}
+                                value={country.id}
+                              >
+                                {country.name}
+                                {" · "}
+                                {country.soldiers}
+                                {" soldiers"}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <button
+                          type="submit"
+                          className={styles.primary}
+                          disabled={
+                            !fromId || !toId
+                          }
+                        >
+                          Begin attack
+                        </button>
+                      </fieldset>
+
+                      <button
+                        type="button"
+                        disabled={!readyToCommand}
+                        onClick={() =>
+                          void send({
+                            type: "end-turn",
+                          })
+                        }
+                      >
+                        {live.attackUsed
+                          ? "Finish turn"
+                          : "Skip attack and end turn"}
+                      </button>
+                    </form>
+                  )}
+                </section>
+
+                <section className={styles.panel}>
+                  <h2>Transfer soldiers</h2>
+
+                  <p className={styles.muted}>
+                    Transfer between two countries
+                    you own when no attack is active.
+                    Leave at least one soldier behind.
+                  </p>
+
+                  <form
+                    className={styles.form}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+
+                      void send({
+                        type: "transfer",
+                        fromId: transferFrom,
+                        toId: transferTo,
+                        amount: transferAmount,
+                      });
+                    }}
+                  >
+                    <fieldset
+                      disabled={
+                        !readyToCommand ||
+                        live.activeAttack !== null
+                      }
+                      className={styles.form}
+                    >
+                      <label>
+                        Source country
+
+                        <select
+                          value={transferFrom}
+                          onChange={(event) => {
+                            setTransferFrom(
+                              event.target.value,
+                            );
+
+                            setTransferAmount(1);
+                          }}
+                        >
+                          <option value="">
+                            Choose source
+                          </option>
+
+                          {owned
+                            .filter(
+                              (country) =>
+                                country.soldiers > 1,
+                            )
+                            .map((country) => (
+                              <option
+                                key={country.id}
+                                value={country.id}
+                              >
+                                {country.name}
+                                {" · "}
+                                {country.soldiers}
+                                {" soldiers"}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        Destination country
+
+                        <select
+                          value={transferTo}
+                          onChange={(event) =>
+                            setTransferTo(
+                              event.target.value,
+                            )
+                          }
+                        >
+                          <option value="">
+                            Choose destination
+                          </option>
+
+                          {owned
+                            .filter(
+                              (country) =>
+                                country.id !==
+                                transferFrom,
+                            )
+                            .map((country) => (
+                              <option
+                                key={country.id}
+                                value={country.id}
+                              >
+                                {country.name}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+
+                      <label>
+                        Soldiers to transfer
+
+                        <input
+                          type="number"
+                          min={1}
+                          max={Math.max(
+                            1,
+                            (selectedTransferSource
+                              ?.soldiers ?? 1) - 1,
+                          )}
+                          step={1}
+                          value={transferAmount}
+                          onChange={(event) =>
+                            setTransferAmount(
+                              Number(
+                                event.target.value,
+                              ),
+                            )
+                          }
+                        />
+                      </label>
+
+                      <button
+                        type="submit"
+                        disabled={
+                          !transferFrom ||
+                          !transferTo ||
+                          transferFrom === transferTo
+                        }
+                      >
+                        Transfer soldiers
+                      </button>
+                    </fieldset>
+                  </form>
+                </section>
+
+                {live.pendingReinforcements > 0 &&
+                  currentParticipant?.kind ===
+                    "human" && (
+                    <ReinforcementForm
+                      key={
+                        "reinforcements-" +
+                        `${live.round}:` +
+                        `${live.turnIndex}:` +
+                        `${live.pendingReinforcements}`
+                      }
+                      state={live}
+                      enabled={canAct}
+                      onAllocate={(allocations) => {
+                        void send({
+                          type: "allocate",
+                          allocations,
+                        });
+                      }}
+                    />
+                  )}
+              </div>
             )}
           </div>
 
-          <aside
-            className="war-dock"
-            aria-label="War correspondent"
-          >
-            <h2>War correspondent</h2>
+          <aside className={styles.sidebar}>
+            <section className={styles.panel}>
+              <h2>Campaign history</h2>
 
-            <div
-              className="war-dock-feed"
-              tabIndex={0}
-              aria-label="Battle reports"
-            >
-              {messages.map(
-                (
-                  message: string,
-                  index: number,
-                ) => (
-                  <div
-                    key={index}
-                    className="correspondent-text"
+              <div className={styles.form}>
+                <label>
+                  Recorded board state
+
+                  <select
+                    value={replayRevision ?? ""}
+                    disabled={
+                      busy || playback !== null
+                    }
+                    onChange={(event) => {
+                      dispatch({
+                        type: "select-history",
+
+                        revision:
+                          event.target.value === ""
+                            ? null
+                            : Number(
+                                event.target.value,
+                              ),
+                      });
+                    }}
                   >
-                    {message}
-                  </div>
-                ),
+                    <option value="">
+                      Live campaign
+                    </option>
+
+                    {events.map((event) => (
+                      <option
+                        key={
+                          `history-option-${event.revision}`
+                        }
+                        value={event.revision}
+                      >
+                        #{event.revision}
+                        {" · "}
+                        {event.action}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className={styles.toolbar}>
+                  <button
+                    type="button"
+                    disabled={
+                      events.length === 0 ||
+                      busy ||
+                      playback !== null
+                    }
+                    onClick={() => {
+                      dispatch({
+                        type:
+                          "toggle-history-playback",
+                      });
+                    }}
+                  >
+                    {replayPlaying
+                      ? "Pause history"
+                      : "Play history"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      replayRevision === null
+                    }
+                    onClick={() => {
+                      dispatch({
+                        type: "select-history",
+                        revision: null,
+                      });
+                    }}
+                  >
+                    Return to live
+                  </button>
+                </div>
+              </div>
+
+              {replayEvent && (
+                <p className={styles.muted}>
+                  {replayEvent.message}
+
+                  {replayEvent.reason
+                    ? ` Reason: ${replayEvent.reason}`
+                    : ""}
+                </p>
               )}
-            </div>
+            </section>
+
+            <section
+              className={styles.panel}
+              aria-label={
+                "Battle and NPC decision log"
+              }
+            >
+              <h2>Command reports</h2>
+
+              <p className={styles.muted}>
+                Saved actions, battle results,
+                and NPC explanations.
+              </p>
+
+              <div
+                className={styles.log}
+                tabIndex={0}
+                aria-label={
+                  "Campaign event history"
+                }
+              >
+                {[...events]
+                  .reverse()
+                  .slice(0, 60)
+                  .map((event) => (
+                    <article
+                      key={
+                        `report-${event.revision}`
+                      }
+                      className={styles.logEntry}
+                    >
+                      <strong>
+                        EVENT {event.revision}
+                        {" · "}
+
+                        {event.actorId === "human"
+                          ? "YOUR COMMAND"
+                          : event.actorId === "system"
+                            ? "CAMPAIGN"
+                            : "NPC COMMAND"}
+                      </strong>
+
+                      <p>{event.message}</p>
+
+                      {event.reason && (
+                        <p
+                          className={styles.reason}
+                        >
+                          Reason: {event.reason}
+                        </p>
+                      )}
+                    </article>
+                  ))}
+              </div>
+            </section>
           </aside>
         </div>
       </div>

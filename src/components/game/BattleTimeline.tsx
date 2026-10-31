@@ -2,12 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-type Props = {
+interface Props {
   battleId: number;
   fast: boolean;
   onImpact: () => void;
   onComplete: () => void;
-};
+}
 
 export function BattleTimeline({
   battleId,
@@ -34,46 +34,57 @@ export function BattleTimeline({
   }, [onImpact, onComplete]);
 
   useEffect(() => {
-    const stage = document.querySelector<HTMLElement>(
-      `[data-battle-id="${battleId}"]`,
-    );
-
-    const map = document.querySelector<SVGSVGElement>(
-      ".map-panel > svg",
-    );
-
-    if (!stage || !map) {
-      callbacks.current.onComplete();
-      return;
-    }
-
-    const animations = stage.getAnimations({
-      subtree: true,
-    });
-
-    for (const animation of animations) {
-      animation.pause();
-      animation.currentTime = 0;
-    }
-
-    map.pauseAnimations();
-    map.setCurrentTime(0);
-
     let frame = 0;
-    let previousTime = performance.now();
+    let previousTime: number | null = null;
     let elapsed = 0;
     let rate = desiredRate.current;
     let impactPlayed = false;
+    let captured = false;
+
+    let animations: Animation[] = [];
+    let map: SVGSVGElement | null = null;
 
     const reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
 
     function tick(now: number): void {
-      const delta = Math.max(0, now - previousTime);
+      if (!captured) {
+        const stage = document.querySelector<HTMLElement>(
+          `[data-battle-id="${battleId}"]`,
+        );
+
+        if (stage) {
+          animations = stage.getAnimations({
+            subtree: true,
+          });
+
+          for (const animation of animations) {
+            animation.pause();
+            animation.currentTime = 0;
+          }
+
+          captured = true;
+        }
+      }
+
+      if (!map) {
+        map = document.querySelector<SVGSVGElement>(
+          ".map-panel > svg",
+        );
+
+        if (map) {
+          map.pauseAnimations();
+        }
+      }
+
+      const delta =
+        previousTime === null
+          ? 0
+          : Math.max(0, now - previousTime);
+
       previousTime = now;
 
-      // Smooth the transition between normal and fast.
       rate +=
         (desiredRate.current - rate) *
         (1 - Math.exp(-delta / 120));
@@ -83,15 +94,15 @@ export function BattleTimeline({
         elapsed + delta * rate,
       );
 
-      const visualTime = reducedMotion
-        ? 2650
-        : elapsed;
+      const visualTime = reducedMotion ? 2650 : elapsed;
 
       for (const animation of animations) {
         animation.currentTime = visualTime;
       }
 
-      map!.setCurrentTime(visualTime / 1000);
+      if (map) {
+        map.setCurrentTime(visualTime / 1000);
+      }
 
       if (!impactPlayed && elapsed >= 1780) {
         impactPlayed = true;
@@ -111,7 +122,6 @@ export function BattleTimeline({
     return () => {
       cancelAnimationFrame(frame);
 
-      // Cleanup must not count as battle completion.
       for (const animation of animations) {
         animation.pause();
       }
