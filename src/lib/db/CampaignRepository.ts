@@ -28,14 +28,66 @@ export class CampaignRequestError extends Error {
   }
 }
 
-export interface SavedCampaignEvent extends CampaignEvent {
+export interface SavedCampaignEvent
+  extends CampaignEvent {
   reason: string | null;
   fromId: string | null;
   toId: string | null;
 }
 
 export class CampaignRepository {
-  private static randomInteger(maximum: number): number {
+  static async remove(
+    id: string,
+    playerId: string,
+  ): Promise<void> {
+    const { adminDb } = getAdminServices();
+
+    const reference = adminDb
+      .collection("campaigns")
+      .doc(id);
+
+    await adminDb.runTransaction(
+      async (transaction) => {
+        const snapshot =
+          await transaction.get(reference);
+
+        if (!snapshot.exists) {
+          throw new CampaignRequestError(
+            "Campaign not found.",
+            404,
+          );
+        }
+
+        if (
+          snapshot.data()?.state?.playerId !==
+          playerId
+        ) {
+          throw new CampaignRequestError(
+            "Only the campaign owner can delete it.",
+            403,
+          );
+        }
+
+        /*
+         * Prevent moves while the campaign and its
+         * history are being removed.
+         */
+        transaction.update(reference, {
+          deleting: true,
+        });
+      },
+    );
+
+    /*
+     * Deleting only the parent document would leave
+     * Firestore subcollections behind.
+     */
+    await adminDb.recursiveDelete(reference);
+  }
+
+  private static randomInteger(
+    maximum: number,
+  ): number {
     return randomInt(maximum);
   }
 
@@ -52,65 +104,83 @@ export class CampaignRepository {
       .doc(input.id);
 
     /*
-     * The browser supplies a UUID for this creation attempt.
-     * Repeating that same request returns the same campaign
-     * instead of creating another one.
+     * Repeating a creation request with the same ID
+     * returns the existing owned campaign.
      */
-    return adminDb.runTransaction(async (transaction) => {
-      const existing = await transaction.get(reference);
+    return adminDb.runTransaction(
+      async (transaction) => {
+        const existing =
+          await transaction.get(reference);
 
-      if (existing.exists) {
-        const state = existing.data()?.state as
-          | CampaignState
-          | undefined;
+        if (existing.exists) {
+          if (existing.data()?.deleting) {
+            throw new CampaignRequestError(
+              "This campaign is being deleted.",
+              409,
+            );
+          }
 
-        if (!state || state.playerId !== input.playerId) {
-          throw new CampaignRequestError(
-            "This campaign ID is unavailable.",
-            409,
-          );
+          const state =
+            existing.data()?.state as
+              | CampaignState
+              | undefined;
+
+          if (
+            !state ||
+            state.playerId !== input.playerId
+          ) {
+            throw new CampaignRequestError(
+              "This campaign ID is unavailable.",
+              409,
+            );
+          }
+
+          return state;
         }
 
+        const state = CampaignEngine.create(
+          {
+            id: input.id,
+            playerId: input.playerId,
+
+            selectedCountryId:
+              input.selectedCountryId,
+
+            countryPool: COUNTRY_CATALOGUE,
+            difficulty: input.difficulty,
+          },
+
+          this.randomInteger,
+          Date.now(),
+        );
+
+        transaction.create(reference, {
+          state,
+          lastEvent: null,
+          nextActionAt: 0,
+          populationSource: POPULATION_SOURCE,
+        });
+
+        transaction.create(
+          reference.collection("events").doc("0"),
+
+          {
+            revision: 0,
+            actorId: "system",
+            action: "setup",
+            message: "Campaign created.",
+            createdAt: state.createdAt,
+            dice: null,
+            reason: null,
+            fromId: null,
+            toId: null,
+            afterState: state,
+          },
+        );
+
         return state;
-      }
-
-      const state = CampaignEngine.create(
-        {
-          id: input.id,
-          playerId: input.playerId,
-          selectedCountryId: input.selectedCountryId,
-          countryPool: COUNTRY_CATALOGUE,
-          difficulty: input.difficulty,
-        },
-        this.randomInteger,
-        Date.now(),
-      );
-
-      transaction.create(reference, {
-        state,
-        lastEvent: null,
-        nextActionAt: 0,
-        populationSource: POPULATION_SOURCE,
-      });
-
-      transaction.create(
-        reference.collection("events").doc("0"),
-        {
-          revision: 0,
-          actorId: "system",
-          action: "setup",
-          message: "Campaign created.",
-          createdAt: state.createdAt,
-          dice: null,
-          reason: null,
-          fromId: null,
-          toId: null,
-          afterState: state,
-        },
-      );
-
-      return state;
-    });
+      },
+    );
   }
 
   static async execute(input: {
@@ -129,159 +199,192 @@ export class CampaignRepository {
       .collection("campaigns")
       .doc(input.id);
 
-    return adminDb.runTransaction(async (transaction) => {
-      const snapshot = await transaction.get(reference);
+    return adminDb.runTransaction(
+      async (transaction) => {
+        const snapshot =
+          await transaction.get(reference);
 
-      if (!snapshot.exists) {
-        throw new CampaignRequestError(
-          "Campaign not found.",
-          404,
-        );
-      }
-
-      const document = snapshot.data();
-
-      const state = document?.state as
-        | CampaignState
-        | undefined;
-
-      if (!state || state.schemaVersion !== 1) {
-        throw new CampaignRequestError(
-          "This campaign uses an unsupported format.",
-          409,
-        );
-      }
-
-      if (state.playerId !== input.playerId) {
-        throw new CampaignRequestError(
-          "Only the campaign owner can make moves.",
-          403,
-        );
-      }
-
-      if (state.revision !== input.expectedRevision) {
-        throw new CampaignRequestError(
-          "The board has changed. Use its latest state.",
-          409,
-        );
-      }
-
-      const now = Date.now();
-
-      const nextActionAt =
-        typeof document?.nextActionAt === "number"
-          ? document.nextActionAt
-          : 0;
-
-      if (now < nextActionAt) {
-        throw new CampaignRequestError(
-          "Please wait briefly before the next action.",
-          429,
-        );
-      }
-
-      const actorId = CampaignEngine.currentActor(state);
-
-      const participant = state.participants.find(
-        (item) => item.id === actorId,
-      );
-
-      if (!participant) {
-        throw new CampaignRequestError(
-          "The current participant is invalid.",
-          409,
-        );
-      }
-
-      let action: CampaignAction;
-      let reason: string | null = null;
-
-      if (input.mode === "npc") {
-        if (participant.kind !== "npc") {
+        if (!snapshot.exists) {
           throw new CampaignRequestError(
-            "It is the human player's turn.",
+            "Campaign not found.",
+            404,
+          );
+        }
+
+        const document = snapshot.data();
+
+        if (document?.deleting) {
+          throw new CampaignRequestError(
+            "This campaign is being deleted.",
             409,
           );
         }
 
-        const decision = NpcStrategy.choose(state);
+        const state = document?.state as
+          | CampaignState
+          | undefined;
 
-        action = decision.action;
-        reason = decision.reason;
-      } else {
         if (
-          participant.kind !== "human" ||
-          !input.action
+          !state ||
+          state.schemaVersion !== 1
         ) {
           throw new CampaignRequestError(
-            "It is not the human player's turn.",
+            "This campaign uses an unsupported format.",
             409,
           );
         }
 
-        action = input.action;
-      }
+        if (
+          state.playerId !== input.playerId
+        ) {
+          throw new CampaignRequestError(
+            "Only the campaign owner can make moves.",
+            403,
+          );
+        }
 
-      let result;
+        if (
+          state.revision !==
+          input.expectedRevision
+        ) {
+          throw new CampaignRequestError(
+            "The board has changed. Use its latest state.",
+            409,
+          );
+        }
 
-      try {
-        result = CampaignEngine.apply(
-          state,
-          actorId,
-          action,
-          this.randomInteger,
-          now,
+        const now = Date.now();
+
+        const nextActionAt =
+          typeof document?.nextActionAt ===
+          "number"
+            ? document.nextActionAt
+            : 0;
+
+        if (now < nextActionAt) {
+          throw new CampaignRequestError(
+            "Please wait briefly before the next action.",
+            429,
+          );
+        }
+
+        const actorId =
+          CampaignEngine.currentActor(state);
+
+        const participant =
+          state.participants.find(
+            (item) => item.id === actorId,
+          );
+
+        if (!participant) {
+          throw new CampaignRequestError(
+            "The current participant is invalid.",
+            409,
+          );
+        }
+
+        let action: CampaignAction;
+        let reason: string | null = null;
+
+        if (input.mode === "npc") {
+          if (
+            participant.kind !== "npc"
+          ) {
+            throw new CampaignRequestError(
+              "It is the human player's turn.",
+              409,
+            );
+          }
+
+          const decision =
+            NpcStrategy.choose(state);
+
+          action = decision.action;
+          reason = decision.reason;
+        } else {
+          if (
+            participant.kind !== "human" ||
+            !input.action
+          ) {
+            throw new CampaignRequestError(
+              "It is not the human player's turn.",
+              409,
+            );
+          }
+
+          action = input.action;
+        }
+
+        let result;
+
+        try {
+          result = CampaignEngine.apply(
+            state,
+            actorId,
+            action,
+            this.randomInteger,
+            now,
+          );
+        } catch (error) {
+          throw new CampaignRequestError(
+            error instanceof Error
+              ? error.message
+              : "The action is invalid.",
+            400,
+          );
+        }
+
+        const event: SavedCampaignEvent = {
+          ...result.event,
+          reason,
+
+          fromId:
+            state.activeAttack
+              ?.attackerCountryId ??
+            (
+              action.type === "start-attack"
+                ? action.fromId
+                : null
+            ),
+
+          toId:
+            state.activeAttack
+              ?.defenderCountryId ??
+            (
+              action.type === "start-attack"
+                ? action.toId
+                : null
+            ),
+        };
+
+        /*
+         * The board and history event are saved
+         * together in the same transaction.
+         */
+        transaction.update(reference, {
+          state: result.state,
+          lastEvent: event,
+          nextActionAt: now + 300,
+        });
+
+        transaction.create(
+          reference
+            .collection("events")
+            .doc(
+              String(result.state.revision),
+            ),
+
+          {
+            ...event,
+            afterState: result.state,
+          },
         );
-      } catch (error) {
-        throw new CampaignRequestError(
-          error instanceof Error
-            ? error.message
-            : "The action is invalid.",
-          400,
-        );
-      }
 
-      const event: SavedCampaignEvent = {
-        ...result.event,
-        reason,
-
-        fromId:
-          state.activeAttack?.attackerCountryId ??
-          (action.type === "start-attack"
-            ? action.fromId
-            : null),
-
-        toId:
-          state.activeAttack?.defenderCountryId ??
-          (action.type === "start-attack"
-            ? action.toId
-            : null),
-      };
-
-      /*
-       * Save the result and replay event atomically.
-       * They either both commit or neither commits.
-       */
-      transaction.update(reference, {
-        state: result.state,
-        lastEvent: event,
-        nextActionAt: now + 300,
-      });
-
-      transaction.create(
-        reference
-          .collection("events")
-          .doc(String(result.state.revision)),
-        {
-          ...event,
-          afterState: result.state,
-        },
-      );
-
-      return {
-        state: result.state,
-        event,
-      };
-    });
+        return {
+          state: result.state,
+          event,
+        };
+      },
+    );
   }
 }

@@ -1,0 +1,29 @@
+.tabletop {
+  position: relative;
+  margin: 20px 0;
+  overflow: hidden;
+  border: 1px solid #bca37150;
+  border-radius: 16px;
+  background: #07101a;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: clamp(210px, 30vw, 330px);
+}
+
+.caption {
+  position: absolute;
+  bottom: 12px;
+  left: 16px;
+
+  color: #c4b18a;
+
+  font:
+    9px var(--font-geist-mono),
+    monospace;
+
+  letter-spacing: 0.15em;
+  pointer-events: none;
+}

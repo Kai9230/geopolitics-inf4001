@@ -1,0 +1,2005 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+
+import Link from "next/link";
+
+import {
+  onAuthStateChanged,
+} from "firebase/auth";
+
+import {
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+} from "firebase/firestore";
+
+import {
+  auth,
+  db,
+} from "@/lib/firebase/config";
+
+import {
+  CampaignClient,
+} from "@/lib/api/CampaignClient";
+
+import {
+  SoundEngine,
+} from "@/lib/audio/SoundEngine";
+
+import type {
+  CampaignAction,
+  CampaignEvent,
+  CampaignState,
+} from "@/types/game-state";
+
+import type { Country } from "@/types";
+
+import { RiskMap } from "@/components/game/RiskMap";
+
+import { RollingDice } from "@/components/game/RollingDice";
+
+import { MiniatureBattle } from "@/components/game/MiniatureBattle";
+
+import {
+  getFactionColor,
+  type MapBattleAnimation,
+} from "@/components/game/MapTypes";
+import s from "./CampaignExperience.module.css";
+
+type Event = Omit<
+  CampaignEvent,
+  "action"
+> & {
+  action: string;
+  reason?: string | null;
+  fromId?: string | null;
+  toId?: string | null;
+  afterState: CampaignState;
+};
+
+type Model = {
+  live: CampaignState | null;
+  events: Event[];
+  cursor: number | null;
+  playing: Event | null;
+};
+
+type Update =
+  | {
+      type: "live";
+      state: CampaignState;
+    }
+  | {
+      type: "events";
+      events: Event[];
+    }
+  | {
+      type: "finish";
+      revision: number;
+    };
+
+const initial: Model = {
+  live: null,
+  events: [],
+  cursor: null,
+  playing: null,
+};
+
+function queue(model: Model): Model {
+  if (
+    model.cursor === null ||
+    model.playing
+  ) {
+    return model;
+  }
+
+  let cursor = model.cursor;
+
+  for (const event of model.events) {
+    if (event.revision <= cursor) {
+      continue;
+    }
+
+    if (
+      event.dice &&
+      event.fromId &&
+      event.toId
+    ) {
+      return {
+        ...model,
+        cursor,
+        playing: event,
+      };
+    }
+
+    cursor = event.revision;
+  }
+
+  return {
+    ...model,
+    cursor,
+  };
+}
+
+function reducer(
+  model: Model,
+  action: Update,
+): Model {
+  if (action.type === "live") {
+    if (
+      model.live &&
+      action.state.revision <
+        model.live.revision
+    ) {
+      return model;
+    }
+
+    return queue({
+      ...model,
+      live: action.state,
+    });
+  }
+
+  if (action.type === "events") {
+    const events = [
+      ...action.events,
+    ].sort(
+      (a, b) =>
+        a.revision - b.revision,
+    );
+
+    return queue({
+      ...model,
+      events,
+
+      cursor:
+        model.cursor ??
+        events.at(-1)?.revision ??
+        null,
+    });
+  }
+
+  if (
+    model.playing?.revision !==
+    action.revision
+  ) {
+    return model;
+  }
+
+  return queue({
+    ...model,
+    playing: null,
+    cursor: action.revision,
+  });
+}
+
+function countries(
+  state: CampaignState,
+): Country[] {
+  return state.countries.map(
+    (country) => ({
+      ...country,
+
+      isPlayer:
+        country.ownerId === "human",
+    }),
+  );
+}
+
+function animation(
+  event: Event | undefined,
+  state: CampaignState | null,
+  active: boolean,
+): MapBattleAnimation | null {
+  if (
+    !event?.dice ||
+    !event.fromId ||
+    !event.toId ||
+    !state
+  ) {
+    return null;
+  }
+
+  const all = countries(state);
+
+  const attacker = all.find(
+    (country) =>
+      country.id === event.fromId,
+  );
+
+  const defender = all.find(
+    (country) =>
+      country.id === event.toId,
+  );
+
+  if (!attacker || !defender) {
+    return null;
+  }
+
+  return {
+    id: event.revision,
+    fromId: attacker.id,
+    toId: defender.id,
+    active,
+
+    attackerColor:
+      getFactionColor(attacker),
+
+    defenderColor:
+      getFactionColor(defender),
+
+    dice: {
+      attacker: event.dice.attacker,
+      defender: event.dice.defender,
+
+      attackerLoss:
+        event.dice.attackerLosses,
+
+      defenderLoss:
+        event.dice.defenderLosses,
+    },
+  };
+}
+
+/*
+ * One clock coordinates:
+ * - map effects
+ * - miniature movement
+ * - dice animation
+ * - impact sound
+ * - release of the next exchange
+ */
+function Clock({
+  id,
+  fast,
+  done,
+}: {
+  id: number;
+  fast: boolean;
+  done: () => void;
+}) {
+  const rate = useRef(
+    fast ? 2.5 : 1,
+  );
+
+  const finish = useRef(done);
+
+  useEffect(() => {
+    rate.current = fast ? 2.5 : 1;
+    finish.current = done;
+  }, [fast, done]);
+
+  useEffect(() => {
+    let frame = 0;
+    let previous = 0;
+    let elapsed = 0;
+    let impact = false;
+
+    const reduced = matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    const stage =
+      document.querySelector(
+        `[data-battle-id="${id}"]`,
+      );
+
+    const effects =
+      stage?.getAnimations({
+        subtree: true,
+      }) ?? [];
+
+    const map =
+      document.querySelector<
+        SVGSVGElement
+      >(".map-panel > svg");
+
+    effects.forEach(
+      (effect) => effect.pause(),
+    );
+
+    map?.pauseAnimations();
+
+    SoundEngine.diceRoll();
+
+    const tick = (now: number) => {
+      const delta = previous
+        ? Math.min(
+            now - previous,
+            100,
+          )
+        : 0;
+
+      elapsed = Math.min(
+        2650,
+        elapsed +
+          delta * rate.current,
+      );
+
+      previous = now;
+
+      const visual = reduced
+        ? 2650
+        : elapsed;
+
+      effects.forEach((effect) => {
+        effect.currentTime = visual;
+      });
+
+      map?.setCurrentTime(
+        visual / 1000,
+      );
+
+      window.dispatchEvent(
+        new CustomEvent(
+          "geopolitics-battle-frame",
+          {
+            detail: {
+              id,
+              elapsed: visual,
+            },
+          },
+        ),
+      );
+
+      if (
+        !impact &&
+        elapsed >= 1780
+      ) {
+        impact = true;
+        SoundEngine.explosion();
+      }
+
+      if (elapsed >= 2650) {
+        finish.current();
+        return;
+      }
+
+      frame =
+        requestAnimationFrame(tick);
+    };
+
+    frame =
+      requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [id]);
+
+  return null;
+}
+
+export default function CampaignExperience({
+  gameId,
+}: {
+  gameId: string;
+}) {
+  const [model, dispatch] =
+    useReducer(reducer, initial);
+
+  const [uid, setUid] =
+    useState<string | null>(null);
+
+  const [error, setError] =
+    useState("");
+
+  const [fatal, setFatal] =
+    useState("");
+
+  const [busy, setBusy] =
+    useState(false);
+
+  const [paused, setPaused] =
+    useState(false);
+
+  const [fast, setFast] =
+    useState(true);
+
+  const [vibration, setVibration] =
+    useState(false);
+
+  const [from, setFrom] =
+    useState("");
+
+  const [to, setTo] =
+    useState("");
+
+  const [stop, setStop] =
+    useState(false);
+
+  const [history, setHistory] =
+    useState<number | null>(null);
+
+  const [replay, setReplay] =
+    useState(false);
+
+  const [notice, setNotice] =
+    useState("");
+
+  const stopIntent = useRef(false);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  const alertKey = useRef("");
+
+  useEffect(() => {
+    mounted.current = true;
+
+    const timer = setTimeout(() => {
+      try {
+        setVibration(
+          localStorage.getItem(
+            "geopolitics-vibration",
+          ) === "true",
+        );
+      } catch {
+        // Storage preferences are optional.
+      }
+    }, 0);
+
+    return () => {
+      mounted.current = false;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    return onAuthStateChanged(
+      auth,
+
+      (user) => {
+        setUid(user?.uid ?? null);
+      },
+
+      () => {
+        setError(
+          "Could not verify your session. Sign in again.",
+        );
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    const stopCampaign = onSnapshot(
+      doc(
+        db,
+        "campaigns",
+        gameId,
+      ),
+
+      (snapshot) => {
+        const state =
+          snapshot.data()?.state as
+            | CampaignState
+            | undefined;
+
+        if (
+          !state ||
+          state.schemaVersion !== 1 ||
+          state.id !== gameId ||
+          state.countries.length !== 10
+        ) {
+          setFatal(
+            "Campaign unavailable or deleted. Return to the war room.",
+          );
+
+          return;
+        }
+
+        if (
+          snapshot.data()?.deleting
+        ) {
+          setFatal(
+            "This campaign is being deleted.",
+          );
+
+          return;
+        }
+
+        setFatal("");
+
+        dispatch({
+          type: "live",
+          state,
+        });
+      },
+
+      () => {
+        setFatal(
+          "Campaign connection failed. Check your connection and Firestore rules.",
+        );
+      },
+    );
+
+    const historyQuery = query(
+      collection(
+        db,
+        "campaigns",
+        gameId,
+        "events",
+      ),
+
+      orderBy(
+        "revision",
+        "asc",
+      ),
+    );
+
+    const stopHistory = onSnapshot(
+      historyQuery,
+
+      (snapshot) => {
+        const events = snapshot.docs
+          .map(
+            (item) =>
+              item.data() as Event,
+          )
+          .filter(
+            (event) =>
+              event.afterState
+                ?.schemaVersion === 1,
+          );
+
+        dispatch({
+          type: "events",
+          events,
+        });
+      },
+
+      () => {
+        setFatal(
+          "History could not load. Check the published Firestore rules.",
+        );
+      },
+    );
+
+    return () => {
+      stopCampaign();
+      stopHistory();
+    };
+  }, [gameId]);
+
+  const live = model.live;
+
+  const actor =
+    live?.turnOrder[
+      live.turnIndex
+    ];
+
+  const participant =
+    live?.participants.find(
+      (item) => item.id === actor,
+    );
+
+  const owner =
+    !!live &&
+    uid === live.playerId;
+
+  const caughtUp =
+    !!live &&
+    model.cursor === live.revision &&
+    !model.playing;
+
+  const humanTurn =
+    owner &&
+    participant?.kind === "human" &&
+    live?.status === "active";
+
+  const canAct =
+    humanTurn &&
+    caughtUp &&
+    !busy &&
+    history === null;
+
+  const own =
+    live?.countries.filter(
+      (country) =>
+        country.ownerId === "human",
+    ) ?? [];
+
+  const enemies =
+    live?.countries.filter(
+      (country) =>
+        country.ownerId !== "human",
+    ) ?? [];
+
+  const selectable =
+    canAct &&
+    live?.pendingReinforcements === 0 &&
+    !live.attackUsed &&
+    !live.activeAttack;
+
+  const send = useCallback(
+    async (
+      action?: CampaignAction,
+    ) => {
+      if (
+        !live ||
+        auth.currentUser?.uid !==
+          live.playerId ||
+        inFlight.current
+      ) {
+        return;
+      }
+
+      inFlight.current = true;
+
+      setBusy(true);
+      setError("");
+
+      try {
+        const result = action
+          ? await CampaignClient.act(
+              live,
+              action,
+            )
+          : await CampaignClient.advanceNpc(
+              live,
+            );
+
+        if (mounted.current) {
+          dispatch({
+            type: "live",
+            state: result.state,
+          });
+
+          setPaused(false);
+        }
+      } catch (failure) {
+        if (mounted.current) {
+          setError(
+            failure instanceof Error
+              ? failure.message
+              : "Request failed.",
+          );
+
+          setPaused(true);
+        }
+      } finally {
+        inFlight.current = false;
+
+        if (mounted.current) {
+          setBusy(false);
+        }
+      }
+    },
+    [live],
+  );
+
+  /*
+   * Only NPCs are automatically advanced
+   * when there is no active human attack.
+   *
+   * A human turn without an active attack
+   * waits for the player's commands.
+   */
+  useEffect(() => {
+    if (
+      !live ||
+      !owner ||
+      !caughtUp ||
+      busy ||
+      paused ||
+      history !== null ||
+      live.status !== "active"
+    ) {
+      return;
+    }
+
+    const npc =
+      participant?.kind === "npc";
+
+    if (
+      !npc &&
+      !live.activeAttack
+    ) {
+      return;
+    }
+
+    const delay = stop
+      ? 350
+      : npc
+        ? fast
+          ? 450
+          : 1000
+        : 400;
+
+    const timer = setTimeout(() => {
+      if (npc) {
+        void send();
+      } else {
+        void send({
+          type: stopIntent.current
+            ? "stop-attack"
+            : "roll",
+        });
+      }
+    }, delay);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    live,
+    owner,
+    caughtUp,
+    busy,
+    paused,
+    history,
+    participant?.kind,
+    fast,
+    stop,
+    send,
+  ]);
+
+  /*
+   * One alert for the human turn,
+   * not one alert per dice exchange.
+   */
+  useEffect(() => {
+    if (
+      !live ||
+      !humanTurn ||
+      !caughtUp ||
+      history !== null
+    ) {
+      return;
+    }
+
+    const key =
+      `${live.id}:` +
+      `${live.round}:` +
+      `${live.turnIndex}`;
+
+    if (
+      key === alertKey.current
+    ) {
+      return;
+    }
+
+    alertKey.current = key;
+
+    SoundEngine.reinforce();
+
+    if (
+      vibration &&
+      navigator.vibrate
+    ) {
+      navigator.vibrate([
+        100,
+        60,
+        100,
+      ]);
+    }
+  }, [
+    live,
+    humanTurn,
+    caughtUp,
+    history,
+    vibration,
+  ]);
+
+  useEffect(() => {
+    if (
+      !replay ||
+      history === null
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const next =
+        model.events.find(
+          (event) =>
+            event.revision > history,
+        );
+
+      if (next) {
+        setHistory(next.revision);
+      } else {
+        setReplay(false);
+      }
+    }, 1600);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [
+    replay,
+    history,
+    model.events,
+  ]);
+
+  const recorded =
+    model.events.find(
+      (event) =>
+        event.revision === history,
+    );
+
+  const before = model.playing
+    ? [...model.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.revision <
+            model.playing!.revision,
+        )?.afterState
+    : null;
+
+  const view =
+    recorded?.afterState ??
+    before ??
+    model.events.find(
+      (event) =>
+        event.revision ===
+        model.cursor,
+    )?.afterState ??
+    live;
+
+  const shown =
+    history !== null
+      ? recorded
+      : model.playing ??
+        [...model.events]
+          .reverse()
+          .find(
+            (event) =>
+              event.dice &&
+              event.revision <=
+                (
+                  model.cursor ??
+                  -1
+                ),
+          );
+
+  const battleBefore = shown
+    ? [...model.events]
+        .reverse()
+        .find(
+          (event) =>
+            event.revision <
+            shown.revision,
+        )?.afterState ??
+      shown.afterState
+    : null;
+
+  const anim = animation(
+    shown,
+    battleBefore,
+
+    history === null &&
+      !!model.playing,
+  );
+
+  function select(
+    id: string,
+  ): void {
+    if (
+      !selectable ||
+      !live
+    ) {
+      return;
+    }
+
+    const country =
+      live.countries.find(
+        (item) => item.id === id,
+      );
+
+    if (!country) return;
+
+    if (
+      country.ownerId === "human"
+    ) {
+      if (
+        country.soldiers < 2
+      ) {
+        setError(
+          "This country needs two soldiers to attack. Reinforce or transfer troops first.",
+        );
+
+        return;
+      }
+
+      setFrom(id);
+      setTo("");
+      setError("");
+    } else if (!from) {
+      setError(
+        "First click your country to attack from.",
+      );
+    } else {
+      setTo(id);
+      setError("");
+    }
+  }
+
+  if (
+    fatal ||
+    !live ||
+    !view
+  ) {
+    return (
+      <main className={s.shell}>
+        <h1>
+          {fatal ||
+            "Connecting to campaign…"}
+        </h1>
+
+        <Link href="/lobby">
+          Return to war room
+        </Link>
+      </main>
+    );
+  }
+
+  const status =
+    history !== null
+      ? "REPLAY"
+      : !owner
+        ? "SPECTATOR"
+        : live.status !== "active"
+          ? "CAMPAIGN COMPLETE"
+          : humanTurn
+            ? "YOUR TURN"
+            : `${
+                participant?.name ??
+                "OPPONENT"
+              }’S TURN`;
+
+  const phase =
+    live.pendingReinforcements > 0
+      ? "reinforce"
+      : live.activeAttack
+        ? "battle"
+        : live.attackUsed
+          ? "finish"
+          : "select";
+
+  const attacker = own.find(
+    (country) =>
+      country.id === from,
+  );
+
+  const defender = enemies.find(
+    (country) =>
+      country.id === to,
+  );
+
+  const last =
+    model.events.at(-1);
+
+  const upcoming = [
+    ...live.turnOrder.slice(
+      live.turnIndex + 1,
+    ),
+
+    ...live.turnOrder.slice(
+      0,
+      live.turnIndex,
+    ),
+  ].filter(
+    (id) =>
+      live.countries.some(
+        (country) =>
+          country.ownerId === id,
+      ),
+  );
+
+  const ahead =
+    upcoming.indexOf("human") + 1;
+
+  const turnExplanation =
+    history !== null
+      ? "Return to live to continue playing"
+      : live.status === "completed"
+        ? "All ten nations are under one command"
+        : !owner
+          ? "Watch live · Only the owner can make moves"
+          : own.length === 0
+            ? "You have been eliminated · Watch the remaining nations"
+            : humanTurn
+              ? phase === "reinforce"
+                ? `Allocate ${live.pendingReinforcements} soldiers to unlock your commands`
+                : phase === "battle"
+                  ? "Your target is locked · Exchanges continue automatically"
+                  : phase === "finish"
+                    ? "Attack complete · Transfer troops or finish your turn"
+                    : "Click your country, then an enemy target"
+              : `${
+                  ahead > 0
+                    ? `${ahead} opponent turn${
+                        ahead === 1
+                          ? ""
+                          : "s"
+                      } until yours`
+                    : "Watching opponents"
+                } · Every decision remains visible`;
+
+  return (
+    <main className={s.shell}>
+      <header className={s.header}>
+        <div>
+          <small>
+            GEOPOLITICS / ROUND{" "}
+            {live.round}
+          </small>
+
+          <h1>World command</h1>
+        </div>
+
+        <nav>
+          <Link href="/lobby">
+            War room
+          </Link>
+
+          <Link href="/how-to-play">
+            How to play
+          </Link>
+
+          <button
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(
+                  location.href,
+                );
+
+                setNotice(
+                  "Campaign link copied.",
+                );
+              } catch {
+                setNotice(
+                  "Copy the address from your browser.",
+                );
+              }
+            }}
+          >
+            Share
+          </button>
+
+          <button
+            aria-pressed={fast}
+            onClick={() => {
+              setFast(!fast);
+            }}
+          >
+            NPC speed{" "}
+            {fast ? "2.5×" : "1×"}
+          </button>
+        </nav>
+      </header>
+
+      <section
+        className={[
+          s.turn,
+
+          humanTurn &&
+          history === null
+            ? s.yours
+            : "",
+        ].join(" ")}
+
+        role="status"
+        aria-live="polite"
+      >
+        <strong>{status}</strong>
+        <span>{turnExplanation}</span>
+      </section>
+
+      {error && (
+        <div
+          className={s.error}
+          role="alert"
+        >
+          {error}
+
+          {paused && (
+            <button
+              onClick={() => {
+                setError("");
+                setPaused(false);
+              }}
+            >
+              Retry / resume
+            </button>
+          )}
+        </div>
+      )}
+
+      {notice && (
+        <p role="status">
+          {notice}
+        </p>
+      )}
+
+      <section
+        className={s.nations}
+        aria-label={
+          "All ten countries and soldier counts"
+        }
+      >
+        {countries(view).map(
+          (country) => (
+            <button
+              key={country.id}
+              onClick={() => {
+                select(country.id);
+              }}
+              disabled={!selectable}
+
+              aria-pressed={
+                from === country.id ||
+                to === country.id
+              }
+
+              style={{
+                borderBottomColor:
+                  getFactionColor(
+                    country,
+                  ),
+              }}
+            >
+              <span>
+                {country.name}
+              </span>
+
+              <strong>
+                {country.soldiers}
+              </strong>
+
+              <small>
+                {country.isPlayer
+                  ? "YOUR CONTROL"
+                  : "OPPONENT"}
+              </small>
+            </button>
+          ),
+        )}
+      </section>
+
+      <div className={s.layout}>
+        <div className={s.board}>
+          <RiskMap
+            countries={
+              countries(view)
+            }
+
+            selectedAtk={
+              selectable
+                ? from || null
+                : null
+            }
+
+            targetId={
+              selectable
+                ? to || null
+                : null
+            }
+
+            onCountryClick={select}
+
+            battleAnimation={
+              model.playing &&
+              history === null
+                ? anim
+                : null
+            }
+          />
+
+          <div
+            className={s.decision}
+            role="status"
+          >
+            <small>
+              {last?.actorId ===
+              "human"
+                ? "YOUR LATEST ACTION"
+                : "LATEST COMMAND"}
+            </small>
+
+            <p>
+              {last?.message ??
+                "Command is standing by."}
+            </p>
+
+            {last?.reason && (
+              <span>
+                {last.reason}
+              </span>
+            )}
+          </div>
+
+          {anim ? (
+            <section
+              className={[
+                s.battle,
+
+                anim.active
+                  ? "is-running"
+                  : "is-resolved",
+              ].join(" ")}
+
+              data-battle-id={
+                anim.id
+              }
+            >
+              <header>
+                <strong>
+                  {
+                    battleBefore
+                      ?.countries.find(
+                        (country) =>
+                          country.id ===
+                          anim.fromId,
+                      )?.name
+                  }
+                  {" → "}
+                  {
+                    battleBefore
+                      ?.countries.find(
+                        (country) =>
+                          country.id ===
+                          anim.toId,
+                      )?.name
+                  }
+                </strong>
+
+                <small>
+                  {anim.active
+                    ? "RESOLVING EXCHANGE"
+                    : "SAVED EXCHANGE"}
+                </small>
+              </header>
+
+              <MiniatureBattle
+                animation={anim}
+              />
+
+              <RollingDice
+                dice={anim.dice!}
+              />
+            </section>
+          ) : (
+            <section
+              className={s.empty}
+            >
+              <small>
+                TACTICAL TABLETOP
+              </small>
+
+              <h2>
+                Your battle will appear here
+              </h2>
+
+              <p>
+                Choose an attacker and target.
+                Your 3D armies and dice appear
+                as the saved exchange begins.
+              </p>
+            </section>
+          )}
+
+          {model.playing && (
+            <Clock
+              key={
+                model.playing.revision
+              }
+
+              id={
+                model.playing.revision
+              }
+
+              fast={
+                fast &&
+                model.playing.actorId !==
+                  "human"
+              }
+
+              done={() => {
+                dispatch({
+                  type: "finish",
+
+                  revision:
+                    model.playing!
+                      .revision,
+                });
+              }}
+            />
+          )}
+        </div>
+
+        <aside
+          className={s.commands}
+        >
+          <section
+            className={s.panel}
+          >
+            <small>
+              COMMAND CONSOLE
+            </small>
+
+            <h2>
+              {!owner
+                ? "Live spectator"
+                : !humanTurn
+                  ? "Opponent in command"
+                  : phase === "reinforce"
+                    ? "Place reinforcements"
+                    : phase === "battle"
+                      ? "Attack in progress"
+                      : phase === "finish"
+                        ? "Conquest complete"
+                        : "Launch your attack"}
+            </h2>
+
+            {!owner ? (
+              <p>
+                This shared campaign is read-only.
+                Sign in and start your own from
+                the war room.
+              </p>
+            ) : !humanTurn ? (
+              <>
+                <p>
+                  {own.length
+                    ? "Your turn will remain open until you act. NPC simulation stops when your turn begins."
+                    : "Your countries were lost. You can still watch the campaign."}
+                </p>
+
+                <div
+                  className={s.order}
+                >
+                  {upcoming.map(
+                    (id) => (
+                      <span
+                        key={id}
+                        className={
+                          id === "human"
+                            ? s.nextHuman
+                            : ""
+                        }
+                      >
+                        {id === "human"
+                          ? "YOU"
+                          : live.participants.find(
+                              (item) =>
+                                item.id === id,
+                            )?.name}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </>
+            ) : phase === "reinforce" ? (
+              <Allocation
+                key={
+                  `${live.round}:` +
+                  `${live.turnIndex}`
+                }
+
+                state={live}
+                enabled={canAct}
+
+                submit={(allocations) => {
+                  void send({
+                    type: "allocate",
+                    allocations,
+                  });
+                }}
+              />
+            ) : phase === "battle" ? (
+              <>
+                <p>
+                  Exchange{" "}
+                  {
+                    live.activeAttack!
+                      .exchangeNumber
+                  }
+                  . One attack against one target.
+                </p>
+
+                <button
+                  className={s.danger}
+                  disabled={stop}
+
+                  onClick={() => {
+                    stopIntent.current = true;
+                    setStop(true);
+                    setPaused(false);
+                  }}
+                >
+                  {stop
+                    ? "Stopping before the next exchange…"
+                    : "Stop attack and end turn"}
+                </button>
+
+                <p className={s.hint}>
+                  An exchange already resolving
+                  finishes first. Its saved
+                  result is retained.
+                </p>
+              </>
+            ) : (
+              <>
+                {phase === "select" ? (
+                  <>
+                    <p>
+                      1. Select your country on
+                      the map or above.
+                      <br />
+
+                      2. Select an enemy.
+                      <br />
+
+                      3. Confirm the route below.
+                    </p>
+
+                    <div
+                      className={s.route}
+                    >
+                      <span>
+                        {attacker
+                          ? `${attacker.name} · ${attacker.soldiers}`
+                          : "Your attacking country"}
+                      </span>
+
+                      <b>↓</b>
+
+                      <span>
+                        {defender
+                          ? `${defender.name} · ${defender.soldiers}`
+                          : "Enemy target"}
+                      </span>
+                    </div>
+
+                    <button
+                      className={s.primary}
+
+                      disabled={
+                        !selectable ||
+                        !attacker ||
+                        attacker.soldiers < 2 ||
+                        !defender
+                      }
+
+                      onClick={() => {
+                        stopIntent.current = false;
+
+                        setStop(false);
+                        setPaused(false);
+
+                        void send({
+                          type: "start-attack",
+                          fromId: from,
+                          toId: to,
+                        });
+                      }}
+                    >
+                      Launch attack
+                    </button>
+                  </>
+                ) : (
+                  <p>
+                    Your one attack is complete.
+                    You may transfer troops before
+                    finishing this turn.
+                  </p>
+                )}
+
+                <button
+                  disabled={!canAct}
+
+                  onClick={() => {
+                    void send({
+                      type: "end-turn",
+                    });
+                  }}
+                >
+                  {phase === "finish"
+                    ? "Finish turn"
+                    : "Skip attack and end turn"}
+                </button>
+              </>
+            )}
+
+            {history !== null && (
+              <button
+                className={s.primary}
+
+                onClick={() => {
+                  setHistory(null);
+                  setReplay(false);
+                }}
+              >
+                Return to live play
+              </button>
+            )}
+
+            {busy && (
+              <p role="status">
+                Saving command…
+              </p>
+            )}
+
+            {!caughtUp &&
+              !busy &&
+              history === null && (
+                <p className={s.hint}>
+                  Presenting the latest saved
+                  action…
+                </p>
+              )}
+          </section>
+
+          {owner &&
+            own.length > 1 && (
+              <Transfer
+                state={live}
+
+                enabled={
+                  canAct &&
+                  !live.activeAttack &&
+                  live.pendingReinforcements ===
+                    0
+                }
+
+                submit={(action) => {
+                  void send(action);
+                }}
+              />
+            )}
+
+          <section
+            className={s.panel}
+          >
+            <small>
+              CAMPAIGN RECORD
+            </small>
+
+            <h2>
+              History & replay
+            </h2>
+
+            <label>
+              Recorded state
+
+              <select
+                disabled={
+                  busy ||
+                  !!model.playing
+                }
+
+                value={
+                  history ?? ""
+                }
+
+                onChange={(event) => {
+                  setReplay(false);
+
+                  setHistory(
+                    event.target.value === ""
+                      ? null
+                      : Number(
+                          event.target.value,
+                        ),
+                  );
+                }}
+              >
+                <option value="">
+                  Live campaign
+                </option>
+
+                {model.events.map(
+                  (event) => (
+                    <option
+                      key={
+                        event.revision
+                      }
+
+                      value={
+                        event.revision
+                      }
+                    >
+                      #{event.revision}
+                      {" · "}
+                      {event.action}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <button
+              disabled={
+                busy ||
+                !!model.playing ||
+                !model.events.length
+              }
+
+              onClick={() => {
+                if (
+                  !replay &&
+                  history === null
+                ) {
+                  setHistory(
+                    model.events[0]
+                      .revision,
+                  );
+                }
+
+                setReplay(!replay);
+              }}
+            >
+              {replay
+                ? "Pause replay"
+                : "Play history"}
+            </button>
+
+            {recorded && (
+              <p>
+                {recorded.message}
+              </p>
+            )}
+
+            <div className={s.log}>
+              {[...model.events]
+                .reverse()
+                .slice(0, 12)
+                .map((event) => (
+                  <article
+                    key={
+                      event.revision
+                    }
+                  >
+                    <small>
+                      #{event.revision}
+                      {" · "}
+
+                      {event.actorId ===
+                      "human"
+                        ? "YOU"
+                        : event.actorId
+                            .replace(
+                              "npc:",
+                              "",
+                            )
+                            .toUpperCase()}
+                    </small>
+
+                    <p>
+                      {event.message}
+                    </p>
+
+                    {event.reason && (
+                      <span>
+                        {event.reason}
+                      </span>
+                    )}
+                  </article>
+                ))}
+            </div>
+          </section>
+
+          <button
+            aria-pressed={vibration}
+
+            onClick={() => {
+              setVibration(
+                !vibration,
+              );
+
+              try {
+                localStorage.setItem(
+                  "geopolitics-vibration",
+
+                  String(!vibration),
+                );
+              } catch {
+                // Storage preferences are optional.
+              }
+            }}
+          >
+            Turn vibration:{" "}
+            {vibration ? "on" : "off"}
+          </button>
+        </aside>
+      </div>
+    </main>
+  );
+}
+
+function Allocation({
+  state,
+  enabled,
+  submit,
+}: {
+  state: CampaignState;
+  enabled: boolean;
+
+  submit: (
+    allocations: Record<
+      string,
+      number
+    >,
+  ) => void;
+}) {
+  const [values, setValues] =
+    useState<
+      Record<string, number>
+    >({});
+
+  const own =
+    state.countries.filter(
+      (country) =>
+        country.ownerId === "human",
+    );
+
+  const total =
+    Object.values(values).reduce(
+      (sum, amount) =>
+        sum + amount,
+      0,
+    );
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit(values);
+      }}
+    >
+      <fieldset
+        disabled={!enabled}
+      >
+        <p>
+          Allocate exactly{" "}
+          {
+            state
+              .pendingReinforcements
+          }{" "}
+          soldiers.
+        </p>
+
+        {own.map((country) => (
+          <label
+            key={country.id}
+          >
+            {country.name}
+
+            <input
+              type="number"
+              min={0}
+
+              max={
+                state
+                  .pendingReinforcements
+              }
+
+              step={1}
+
+              value={
+                values[country.id] ??
+                0
+              }
+
+              onChange={(event) => {
+                setValues({
+                  ...values,
+
+                  [country.id]:
+                    Number(
+                      event.target.value,
+                    ),
+                });
+              }}
+            />
+          </label>
+        ))}
+
+        <p>
+          {total} /{" "}
+          {
+            state
+              .pendingReinforcements
+          }{" "}
+          placed
+        </p>
+
+        <button
+          className={s.primary}
+
+          disabled={
+            total !==
+            state.pendingReinforcements
+          }
+        >
+          Confirm reinforcements
+        </button>
+      </fieldset>
+    </form>
+  );
+}
+
+function Transfer({
+  state,
+  enabled,
+  submit,
+}: {
+  state: CampaignState;
+  enabled: boolean;
+
+  submit: (
+    action: CampaignAction,
+  ) => void;
+}) {
+  const own =
+    state.countries.filter(
+      (country) =>
+        country.ownerId === "human",
+    );
+
+  const [from, setFrom] =
+    useState("");
+
+  const [to, setTo] =
+    useState("");
+
+  const [amount, setAmount] =
+    useState(1);
+
+  const source = own.find(
+    (country) =>
+      country.id === from,
+  );
+
+  return (
+    <section
+      className={s.panel}
+    >
+      <h2>
+        Transfer troops
+      </h2>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+
+          submit({
+            type: "transfer",
+            fromId: from,
+            toId: to,
+            amount,
+          });
+        }}
+      >
+        <fieldset
+          disabled={!enabled}
+        >
+          <label>
+            From
+
+            <select
+              value={from}
+
+              onChange={(event) => {
+                setFrom(
+                  event.target.value,
+                );
+
+                setAmount(1);
+              }}
+            >
+              <option value="">
+                Choose source
+              </option>
+
+              {own.map(
+                (country) => (
+                  <option
+                    key={country.id}
+                    value={country.id}
+                  >
+                    {country.name}
+                    {" · "}
+                    {country.soldiers}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+
+          <label>
+            To
+
+            <select
+              value={to}
+
+              onChange={(event) => {
+                setTo(
+                  event.target.value,
+                );
+              }}
+            >
+              <option value="">
+                Choose destination
+              </option>
+
+              {own
+                .filter(
+                  (country) =>
+                    country.id !== from,
+                )
+                .map((country) => (
+                  <option
+                    key={country.id}
+                    value={country.id}
+                  >
+                    {country.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label>
+            Soldiers
+
+            <input
+              type="number"
+              min={1}
+
+              max={
+                source
+                  ? source.soldiers - 1
+                  : 1
+              }
+
+              step={1}
+              value={amount}
+
+              onChange={(event) => {
+                setAmount(
+                  Number(
+                    event.target.value,
+                  ),
+                );
+              }}
+            />
+          </label>
+
+          <button
+            disabled={
+              !source ||
+              !own.some(
+                (country) =>
+                  country.id === to,
+              ) ||
+              from === to ||
+              !Number.isInteger(
+                amount,
+              ) ||
+              amount < 1 ||
+              amount >=
+                source.soldiers
+            }
+          >
+            Transfer soldiers
+          </button>
+
+          <p className={s.hint}>
+            Keep one soldier behind.
+            Transfers pause during an attack.
+          </p>
+        </fieldset>
+      </form>
+    </section>
+  );
+}

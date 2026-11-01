@@ -20,6 +20,15 @@ export class CampaignApiError extends Error {
 }
 
 export class CampaignClient {
+  static remove(
+    id: string,
+  ): Promise<{ deleted: boolean }> {
+    return this.post({
+      operation: "delete",
+      id,
+    });
+  }
+
   private static async post<T>(
     body: unknown,
   ): Promise<T> {
@@ -34,15 +43,20 @@ export class CampaignClient {
 
     const token = await user.getIdToken();
 
-    const response = await fetch("/api/campaigns", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+    const response = await fetch(
+      "/api/campaigns",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+
+        cache: "no-store",
+        body: JSON.stringify(body),
       },
-      cache: "no-store",
-      body: JSON.stringify(body),
-    });
+    );
 
     const data = await response.json();
 
