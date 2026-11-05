@@ -11,6 +11,7 @@ type Props = {
   defenderColor: string;
   dice: MapDiceResult | null;
   fast?: boolean;
+  showAircraft?: boolean;
 };
 
 export default function BattleEffects({
@@ -20,6 +21,7 @@ export default function BattleEffects({
   defenderColor,
   dice,
   fast = false,
+  showAircraft = true,
 }: Props) {
   const speed = fast ? 0.34 : 1;
   const time = (seconds: number) => `${seconds * speed}s`;
@@ -88,7 +90,7 @@ export default function BattleEffects({
         strokeDasharray="3 4"
       />
 
-      {[0, 1].map((index: number) => (
+      {showAircraft && [0, 1].map((index: number) => (
         <g
           key={`plane-${index}`}
           className="fighter"
@@ -149,7 +151,7 @@ export default function BattleEffects({
         </g>
       ))}
 
-      {dice && dice.defenderLoss > 0 && (
+      {showAircraft && dice && dice.defenderLoss > 0 && (
         <g
           className="bomb"
           fill="#e5edf7"

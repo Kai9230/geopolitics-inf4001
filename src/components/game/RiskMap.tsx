@@ -599,6 +599,7 @@ export function RiskMap({
                 battleAnimation.defenderColor
               }
               dice={battleAnimation.dice}
+              showAircraft={battleAnimation.showAircraft}
               fast={battleAnimation.fast}
             />
           )}

@@ -13,6 +13,7 @@ export interface MapBattleAnimation {
   toId: string;
   active: boolean;
   fast?: boolean;
+  showAircraft?: boolean;
   attackerColor: string;
   defenderColor: string;
   dice: MapDiceResult | null;

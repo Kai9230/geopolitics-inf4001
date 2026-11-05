@@ -63,6 +63,8 @@ import s from "@/components/game/CampaignExperience.module.css";
 import CampaignAnalytics from "@/components/game/CampaignAnalytics";
 import CampaignExtras from "@/components/game/CampaignExtras";
 import Image from "next/image";
+import Clock from "@/components/game/BattleClock";
+import { ReplayRules } from "@/lib/engine/ReplayRules";
 
 type Event = Omit<
   CampaignEvent,
@@ -73,6 +75,7 @@ type Event = Omit<
   fromId?: string | null;
   toId?: string | null;
   afterState: CampaignState;
+  commentary?: { text?: string; source?: string; status?: string };
 };
 
 type Model = {
@@ -236,6 +239,7 @@ function animation(
 
   return {
     id: event.revision,
+    showAircraft: state.activeAttack?.exchangeNumber === 0,
     fromId: attacker.id,
     toId: defender.id,
     active,
@@ -257,139 +261,6 @@ function animation(
         event.dice.defenderLosses,
     },
   };
-}
-
-/*
- * One clock coordinates:
- * - map effects
- * - miniature movement
- * - dice animation
- * - impact sound
- * - release of the next exchange
- */
-function Clock({
-  id,
-  fast,
-  done,
-}: {
-  id: number;
-  fast: boolean;
-  done: () => void;
-}) {
-  const rate = useRef(
-    fast ? 2.5 : 1,
-  );
-
-  const finish = useRef(done);
-
-  useEffect(() => {
-    rate.current = fast ? 2.5 : 1;
-    finish.current = done;
-  }, [fast, done]);
-
-  useEffect(() => {
-    let frame = 0;
-    let previous = 0;
-    let elapsed = 0;
-    let impact = false;
-
-    const reduced = matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-
-    const stage =
-      document.querySelector(
-        `[data-battle-id="${id}"]`,
-      );
-
-    const effects =
-      stage?.getAnimations({
-        subtree: true,
-      }) ?? [];
-
-    const map =
-      document.querySelector<
-        SVGSVGElement
-      >(".map-panel > svg");
-
-    effects.forEach(
-      (effect) => effect.pause(),
-    );
-
-    map?.pauseAnimations();
-
-    SoundEngine.diceRoll();
-
-    const tick = (now: number) => {
-      const delta = previous
-        ? Math.min(
-            now - previous,
-            100,
-          )
-        : 0;
-
-      elapsed = Math.min(
-        2650,
-        elapsed +
-          delta * rate.current,
-      );
-
-      previous = now;
-
-      const visual = reduced
-        ? 2650
-        : elapsed;
-
-      effects.forEach((effect) => {
-        effect.currentTime = visual;
-      });
-
-      map?.setCurrentTime(
-        visual / 1000,
-      );
-
-      window.dispatchEvent(
-        new CustomEvent(
-          "geopolitics-battle-frame",
-          {
-            detail: {
-              id,
-              elapsed: visual,
-            },
-          },
-        ),
-      );
-
-      if (
-        !impact &&
-        elapsed >= 1780
-      ) {
-        impact = true;
-        SoundEngine.explosion();
-      }
-
-      if (elapsed >= 2650) {
-        finish.current();
-        return;
-      }
-
-      frame =
-        requestAnimationFrame(tick);
-    };
-
-    frame =
-      requestAnimationFrame(tick);
-
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [id]);
-
-  return null;
-}
-
-function recordedReplayDuration(events: Event[], revision: number) {
-  return events.find(e => e.revision === revision)?.dice ? 3100 : 1700;
 }
 
 export default function CampaignExperience({
@@ -415,8 +286,7 @@ export default function CampaignExperience({
   const [paused, setPaused] =
     useState(false);
 
-  const [fast, setFast] =
-    useState(true);
+  const [fast, setFast] = useState(false);
 
   const [vibration, setVibration] =
     useState(false);
@@ -433,8 +303,18 @@ export default function CampaignExperience({
   const [history, setHistory] =
     useState<number | null>(null);
 
-  const [replay, setReplay] =
-    useState(false);
+  const [replay, setReplay] = useState(false);
+  const [replayDone, setReplayDone] = useState<number | null>(null);
+  const [replayEnd, setReplayEnd] = useState<number | null>(null);
+  const [replayRun, setReplayRun] = useState(0);
+
+  function startReplay(revision: number, end: number | null = null) {
+    setHistory(revision);
+    setReplayDone(null);
+    setReplayEnd(end);
+    setReplayRun(run => run + 1);
+    setReplay(true);
+  }
 
   const [notice, setNotice] =
     useState("");
@@ -812,42 +692,23 @@ export default function CampaignExperience({
     vibration,
   ]);
 
+  const recorded = model.events.find(event => event.revision === history);
+  const replayFrame = history === null ? null : ReplayRules.frame(
+    model.events, history, replay && replayDone !== history,
+  );
+  const replayNext = ReplayRules.next(model.events, history, replayEnd);
+  const replayHasBattle = !!replayFrame?.canAnimate;
+
   useEffect(() => {
-    if (
-      !replay ||
-      history === null
-    ) {
-      return;
-    }
-
+    if (!replay || history === null) return;
+    // A battle advances only when its actual animation clock finishes.
+    if (replayHasBattle && replayDone !== history) return;
     const timer = setTimeout(() => {
-      const next =
-        model.events.find(
-          (event) =>
-            event.revision > history,
-        );
-
-      if (next) {
-        setHistory(next.revision);
-      } else {
-        setReplay(false);
-      }
-    }, recordedReplayDuration(model.events, history));
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [
-    replay,
-    history,
-    model.events,
-  ]);
-
-  const recorded =
-    model.events.find(
-      (event) =>
-        event.revision === history,
-    );
+      if (replayNext === null) setReplay(false);
+      else { setReplayDone(null); setHistory(replayNext); }
+    }, replayHasBattle ? 1000 : 1200);
+    return () => clearTimeout(timer);
+  }, [replay, history, replayDone, replayNext, replayHasBattle]);
 
   const before = model.playing
     ? [...model.events]
@@ -859,12 +720,8 @@ export default function CampaignExperience({
         )?.afterState
     : null;
 
-  const replayBefore = replay && recorded?.dice
-    ? model.events.find(e => e.revision === recorded.revision - 1)?.afterState
-    : null;
-
   const view =
-    replayBefore ?? recorded?.afterState ??
+    replayFrame?.state ??
     before ??
     model.events.find(
       (event) =>
@@ -875,7 +732,7 @@ export default function CampaignExperience({
 
   const shown =
     history !== null
-      ? recorded
+      ? replayFrame?.event
       : model.playing ?? undefined;
 
   const battleBefore = shown
@@ -893,8 +750,10 @@ export default function CampaignExperience({
     shown,
     battleBefore,
 
-    history !== null ? replay : !!model.playing,
+    history !== null ? replay && replayDone !== history : !!model.playing,
   );
+  // Each replay run has its own animation identity, even for the same saved roll.
+  if (anim && history !== null) anim.id = -(anim.id + 1 + replayRun * 1000000);
 
   function select(id: string): void {
     if (!live) return;
@@ -945,7 +804,7 @@ export default function CampaignExperience({
 
       setNotice(
         "Attacker selected. Click an enemy country " +
-        "then confirm Launch attack."
+        "to launch your one attack this turn."
       );
 
       return;
@@ -968,7 +827,10 @@ export default function CampaignExperience({
     setError("");
     setNotice("");
 
-    setNotice("Target selected. Confirm Launch attack in the command console.");
+    stopIntent.current = false;
+    setStop(false);
+    setPaused(false);
+    void send({ type: "start-attack", fromId: source.id, toId: country.id });
   }
 
   if (
@@ -1023,8 +885,8 @@ export default function CampaignExperience({
       country.id === to,
   );
 
-  const last =
-    model.events.at(-1);
+  const last = history !== null ? recorded : model.playing ?? model.events.at(-1);
+  const latestAttack = ReplayRules.latestAttack(model.events);
 
   const upcoming = [
     ...live.turnOrder.slice(
@@ -1062,7 +924,7 @@ export default function CampaignExperience({
                   ? "Your target is locked · Exchanges continue automatically"
                   : phase === "finish"
                     ? "Attack complete · Transfer troops or finish your turn"
-                    : "Select your country and an enemy, then confirm Launch attack"
+                    : "Click your country, then an enemy to launch your attack"
               : `${
                   ahead > 0
                     ? `${ahead} opponent turn${
@@ -1074,7 +936,7 @@ export default function CampaignExperience({
                 } · Every decision remains visible`;
 
   return (
-    <main className={s.shell}>
+    <main className={s.shell} data-replay={history !== null}>
       <header className={s.header}>
         <div>
           <small>
@@ -1145,10 +1007,11 @@ export default function CampaignExperience({
 
       <CampaignExtras
         state={live}
+        displayState={view}
         enabled={canAct && !live.activeAttack && live.pendingReinforcements === 0}
         showResult={live.status === "completed" && caughtUp && history === null}
         submit={action => { void send(action); }}
-        replay={() => { setHistory(model.events[0]?.revision ?? 0); setReplay(true); }}
+        replay={() => startReplay(model.events[0]?.revision ?? 0)}
       />
 
       {error && (
@@ -1228,7 +1091,9 @@ export default function CampaignExperience({
               <small>
                 {country.isPlayer
                   ? "YOUR CONTROL"
-                  : "OPPONENT"}
+                  : (view.treaties ?? []).some(t => t.expiresRound >= view.round &&
+                      t.members.includes("human") && t.members.includes(country.ownerId))
+                    ? "ALLY · ATTACK BREAKS TREATY" : "OPPONENT"}
               </small>
             </button>
           ),
@@ -1256,12 +1121,7 @@ export default function CampaignExperience({
 
             onCountryClick={select}
 
-            battleAnimation={
-              model.playing &&
-              history === null
-                ? anim
-                : null
-            }
+            battleAnimation={anim?.active ? anim : null}
           />
 
           <div
@@ -1289,7 +1149,7 @@ export default function CampaignExperience({
 
           {anim ? (
             <section
-              key={`${history === null ? "live" : "replay"}:${anim.id}:${replay}`}
+              key={`${history === null ? "live" : "replay"}:${anim.id}`}
               className={[
                 s.battle,
 
@@ -1326,7 +1186,7 @@ export default function CampaignExperience({
                 <small>
                   {anim.active
                     ? "RESOLVING EXCHANGE"
-                    : "SAVED EXCHANGE"}
+                    : "RECORDED RESULT"}
                 </small>
               </header>
 
@@ -1334,9 +1194,11 @@ export default function CampaignExperience({
                 animation={anim}
               />
 
-              <RollingDice
-                dice={anim.dice!}
-              />
+              <RollingDice dice={anim.dice!} />
+              <p className={s.exchangeResult}>
+                Attacker losses: {anim.dice!.attackerLoss} · Defender losses: {anim.dice!.defenderLoss}
+                {" · "}{shown?.message}
+              </p>
             </section>
           ) : (
             <section
@@ -1358,8 +1220,9 @@ export default function CampaignExperience({
             </section>
           )}
 
-          {history !== null && replay && recorded?.dice && (
-            <Clock key={`replay:${history}`} id={history} fast={false} done={() => {}} />
+          {history !== null && anim?.active && replayHasBattle && (
+            <Clock key={`replay:${anim.id}`} id={anim.id} fast={false}
+              done={() => setReplayDone(history)} />
           )}
 
           {history === null && model.playing && (
@@ -1514,7 +1377,7 @@ export default function CampaignExperience({
                       2. Select an enemy.
                       <br />
 
-                      3. Confirm Launch attack.
+                      3. Clicking the enemy launches the attack.
                     </p>
 
                     <div
@@ -1557,7 +1420,7 @@ export default function CampaignExperience({
                           toId: to,
                         });
                       }}
-                    >Launch attack</button>
+                    >Retry selected attack</button>
                   </>
                 ) : (
                   <p>
@@ -1631,6 +1494,11 @@ export default function CampaignExperience({
               />
             )}
 
+          <CampaignExtras mode="diplomacy" state={live} displayState={view}
+            enabled={canAct && !live.activeAttack && live.pendingReinforcements === 0}
+            showResult={false} submit={action => { void send(action); }}
+            replay={() => startReplay(model.events[0]?.revision ?? 0)} />
+
           <section
             className={s.panel}
           >
@@ -1691,37 +1559,30 @@ export default function CampaignExperience({
               </select>
             </label>
 
-            <button
-              disabled={
-                busy ||
-                !!model.playing ||
-                !model.events.length
-              }
-
-              onClick={() => {
-                if (
-                  !replay &&
-                  history === null
-                ) {
-                  setHistory(
-                    model.events[0]
-                      .revision,
-                  );
-                }
-
-                setReplay(!replay);
-              }}
-            >
-              {replay
-                ? "Pause replay"
-                : "Play history"}
-            </button>
-
-            {recorded && (
-              <p>
-                {recorded.message}
-              </p>
-            )}
+            <div className={s.replayToolbar}>
+              <button disabled={busy || !!model.playing || !model.events.length}
+                onClick={() => replay ? setReplay(false) : startReplay(history ?? model.events[0].revision)}>
+                {replay ? "Pause replay" : history === null ? "Play full history" : "Play from selected event"}
+              </button>
+              <button disabled={busy || !!model.playing || !latestAttack}
+                onClick={() => { if (latestAttack) startReplay(latestAttack.start, latestAttack.end); }}>
+                Replay latest attack
+              </button>
+              <button disabled={history === null}
+                onClick={() => { setReplay(false); setHistory(null); }}>
+                Return to live
+              </button>
+            </div>
+            {recorded && <div className={s.replaySummary} role="status">
+              <strong>{replay ? "PLAYING RECORDING" : "SAVED SNAPSHOT"} · #{recorded.revision}</strong>
+              <p>{recorded.message}</p>
+              {recorded.reason && <p>{recorded.reason}</p>}
+              {recorded.commentary?.text && <p>
+                {recorded.commentary.source === "groq" ? "Recorded AI report: " : "Recorded battle report: "}
+                {recorded.commentary.text}
+              </p>}
+              <p>No new rolls or moves are submitted during replay.</p>
+            </div>}
 
             <div className={s.log}>
               {[...model.events]

@@ -174,9 +174,9 @@ export default function HowToPlay() {
               allocate soldiers and explain their
               choices. Fast-forward speeds up
               visible play without hiding
-              decisions. History shows saved
-              states and dice; return to live
-              play to resume commands.
+              decisions. Play full history to watch recorded boards, dice and battles.
+              Replay latest attack plays the most recent recorded attack.
+              Pausing shows its saved result. Return to live to resume commands.
             </p>
 
             <p className={s.muted}>
@@ -196,9 +196,8 @@ export default function HowToPlay() {
               The turn chime plays once per human
               turn and follows effects settings.
               Vibration is optional and device
-              dependent. Login music belongs to
-              the login; battle music runs during
-              attacks. Audio may need an initial
+              dependent. Login music plays on the login and in the war room.
+              Battle music plays throughout the game. Audio may need an initial
               click to unlock.
             </p>
 
@@ -211,6 +210,17 @@ export default function HowToPlay() {
               casualties. Miniatures show up to
               six representative figures per side;
               all actual dice are displayed.
+            </p>
+          </section>
+          <section className={s.panel}>
+            <h2>7. Alliances and diplomacy</h2>
+            <p className={s.muted}>
+              On your turn, after reinforcements and outside an attack, offer one alliance
+              or end one treaty in the diplomacy panel. Offers can be rejected and still
+              use your diplomatic action. Accepted treaties last through the next round.
+              NPCs value useful deterrence against a stronger rival and prefer other targets
+              while allied. Attacking an ally breaks the treaty immediately.
+              Alliances never share soldiers or victory: one participant must control all ten nations.
             </p>
           </section>
         </div>

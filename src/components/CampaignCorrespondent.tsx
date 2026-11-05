@@ -162,6 +162,7 @@ function CorrespondentPanel({
         styles.correspondentDock
       }
       aria-label="Live war correspondent"
+      data-live-correspondent="true"
     >
       <p
         className={

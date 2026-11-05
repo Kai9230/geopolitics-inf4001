@@ -1677,3 +1677,5 @@ a:focus-visible,
     transition: none;
   }
 }
+/* Recorded commentary is displayed with its saved event during replay. */
+body:has([data-replay="true"]) [data-live-correspondent="true"] { display: none; }

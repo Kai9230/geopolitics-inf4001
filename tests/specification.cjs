@@ -36,6 +36,8 @@ const {
   COUNTRY_CATALOGUE: pool,
 } = require("../src/data/country-catalogue.ts");
 
+const { ReplayRules: R } = require("../src/lib/engine/ReplayRules.ts");
+
 if (previous) {
   require.extensions[".ts"] = previous;
 } else {
@@ -533,4 +535,47 @@ test("transfers conserve soldiers and reject fractions, negatives, self and enem
   }
   assert.throws(() => apply(state, { ...transfer, toId: a.id }));
   assert.throws(() => apply(state, { ...transfer, toId: state.countries[2].id }));
+});
+
+
+test("replay recovers the attack route, shows before and after boards, and uses saved dice", () => {
+  const original = board();
+  const started = E.apply(original, "human", {
+    type: "start-attack", fromId: original.countries[0].id, toId: original.countries[1].id,
+  }, random, 1);
+  const rolled = E.apply(started.state, "human", { type: "roll" }, rolls([5,5,0,0]), 2);
+  const events = [
+    { ...started.event, afterState: started.state },
+    { ...rolled.event, afterState: rolled.state },
+  ];
+  const snapshot = JSON.stringify(events);
+  const running = R.frame(events, rolled.state.revision, true);
+  assert(running.canAnimate);
+  assert.equal(running.event.fromId, original.countries[0].id);
+  assert.equal(running.event.toId, original.countries[1].id);
+  assert.equal(running.state.countries[1].ownerId, original.countries[1].ownerId);
+  assert.deepEqual(running.event.dice.attacker, [6,6]);
+  const finished = R.frame(events, rolled.state.revision, false);
+  assert.equal(finished.state.countries[1].ownerId, "human");
+  assert.equal(JSON.stringify(events), snapshot);
+  assert.deepEqual(R.latestAttack(events), { start: 1, end: 2 });
+  assert.equal(R.next(events, 1, 2), 2);
+  assert.equal(R.next(events, 2, 2), null);
+});
+
+test("NPC diplomacy evaluates a common threat and records an accepted offer", () => {
+  const state = setup();
+  state.turnIndex = 1;
+  const actor = E.currentActor(state);
+  const others = state.participants.filter(p => p.id !== actor && p.id !== "human");
+  state.countries.forEach(c => { c.soldiers = c.ownerId === actor ? 10 : 2; });
+  state.countries.find(c => c.ownerId === others[0].id).soldiers = 15;
+  state.countries.find(c => c.ownerId === others[1].id).soldiers = 10;
+  const decision = N.choose(state);
+  assert.equal(decision.action.type, "diplomacy");
+  assert(decision.reason.includes("rival"));
+  const result = E.apply(state, actor, decision.action, random, 1);
+  assert.equal(result.state.treaties.length, 1);
+  assert(result.event.message.includes("accepts"));
+  assert.equal(result.state.diplomacyUsed, true);
 });

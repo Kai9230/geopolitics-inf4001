@@ -171,6 +171,23 @@ export class NpcStrategy {
       };
     }
 
+    const strengths = state.participants.map(p => ({
+      id: p.id, kind: p.kind,
+      strength: state.countries.filter(c => c.ownerId === p.id).reduce((n,c) => n + c.soldiers, 0),
+    }));
+    const mine = strengths.find(p => p.id === actorId)!.strength;
+    const rival = strengths.filter(p => p.id !== actorId).sort((a,b) => b.strength - a.strength)[0];
+    if (!state.diplomacyUsed && rival && rival.strength > mine * 1.4) {
+      const partner = strengths.find(p => p.kind === "npc" && p.id !== "human" &&
+        p.id !== actorId && p.id !== rival.id && p.strength > 0 &&
+        mine + p.strength > rival.strength && !(state.treaties ?? []).some(t =>
+          t.expiresRound >= state.round && t.members.includes(actorId) && t.members.includes(p.id)));
+      if (partner) return {
+        action: { type: "diplomacy", targetId: partner.id, operation: "offer" },
+        reason: "A stronger rival threatens this army; a temporary alliance offers useful deterrence.",
+      };
+    }
+
     /*
      * Action 4: consolidate spare soldiers.
      *

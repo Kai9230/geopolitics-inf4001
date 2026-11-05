@@ -1,0 +1,17 @@
+{
+  "backup": "C:\\Users\\Xenia Oliphant\\Desktop\\geopolitics-backup-v3-1793897556842",
+  "files": [
+    "src/lib/engine/ReplayRules.ts",
+    "src/components/game/BattleClock.tsx",
+    "src/components/CampaignExperience.tsx",
+    "src/components/game/CampaignExtras.tsx",
+    "src/components/game/CampaignExperience.module.css",
+    "src/components/CampaignCorrespondent.tsx",
+    "src/app/globals.css",
+    "src/lib/engine/NpcStrategy.ts",
+    "tests/specification.cjs",
+    "src/app/how-to-play/page.tsx",
+    "package.json",
+    "package-lock.json"
+  ]
+}

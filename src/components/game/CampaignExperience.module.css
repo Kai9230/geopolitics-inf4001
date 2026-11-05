@@ -558,3 +558,51 @@
 .deleteDialog label { display: grid; gap: 10px; margin: 24px 0; }
 .deleteDialog input { padding: 12px; background: #07101c; color: white; border: 1px solid #718298; border-radius: 8px; }
 .deleteDialog button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* GeoPolitics v3: clearer hierarchy, accessible controls and centred dialogs. */
+.extras { max-width: 1600px; margin: 0 auto 20px; display: grid; gap: 16px; }
+.overview { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 18px;
+  padding: 20px 24px; border: 1px solid #c6a76640; border-radius: 16px;
+  background: linear-gradient(120deg, #21344a, #0e1929 75%); }
+.overview small { display: block; color: #aebfd4; font-size: 10px; letter-spacing: .12em; }
+.overview strong { display: block; margin-top: 5px; color: #f1d493; font-size: 28px; }
+.overview strong span { color: #9bacc2; font-size: 14px; }
+.overview strong.difficulty { font-size: 18px; text-transform: capitalize; margin-top: 12px; }
+.conquestProgress { grid-column: 1 / -1; color: #b9cbe0; font-size: 11px; }
+.conquestProgress progress { display: block; width: 100%; height: 7px; margin-top: 8px;
+  appearance: none; border: 0; border-radius: 10px; overflow: hidden; background: #07111d; }
+.conquestProgress progress::-webkit-progress-bar { background: #07111d; }
+.conquestProgress progress::-webkit-progress-value { background: linear-gradient(90deg, #b98b39, #ffe0a0); }
+.conquestProgress progress::-moz-progress-bar { background: #e4bc6b; }
+.diplomacy { display: grid; grid-template-columns: 1.25fr 1fr; gap: 12px 28px; }
+.diplomacy h2 { color: #edd39c; }
+.treaties { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
+.treaties span { padding: 7px 12px; border: 1px solid #69bfaf55; border-radius: 20px;
+  background: #153b3b70; color: #b8e5d9; font-size: 11px; }
+.replayToolbar { display: grid; gap: 5px; }
+.replaySummary { margin: 16px 0; padding: 14px; border: 1px solid #85a4d055;
+  border-radius: 10px; background: #102b43; }
+.replaySummary strong { color: #b9d7ff; font-size: 10px; letter-spacing: .08em; }
+.exchangeResult { padding: 12px; margin: 12px 0 0; border-radius: 8px;
+  background: #07111d; color: #e7c88d; font-size: 12px; line-height: 1.8; }
+.deleteDialog { position: fixed; inset: 0; margin: auto; max-height: calc(100dvh - 32px);
+  overflow: auto; width: min(92vw, 500px); }
+.deleteDialog button { border: 1px solid #8095ae66; border-radius: 8px;
+  color: #edf1fa; background: #23354b; }
+.deleteDialog button:last-child { background: #6a283a; border-color: #cb718a; }
+.deleteDialog input:focus-visible { outline: 3px solid #eac77e; outline-offset: 3px; }
+.nations button:not(:disabled):hover { border-color: #e6c480; background: #29374b; transform: translateY(-2px); }
+.nations button { transition: transform .15s, background .15s; }
+.nations button small { line-height: 1.5; }
+@media (max-width: 700px) {
+  .overview { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 18px; }
+  .diplomacy { grid-template-columns: minmax(0,1fr); padding: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nations button { transition: none; }
+  .nations button:not(:disabled):hover { transform: none; }
+}
+
+.diplomacySlot { min-width: 0; }
+.diplomacySlot .diplomacy { grid-template-columns: minmax(0,1fr); }
+.commands { position: static; }
