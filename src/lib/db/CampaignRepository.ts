@@ -98,89 +98,72 @@ export class CampaignRepository {
     difficulty: Difficulty;
   }): Promise<CampaignState> {
     const { adminDb } = getAdminServices();
+    const reference = adminDb.collection("campaigns").doc(input.id);
 
-    const reference = adminDb
-      .collection("campaigns")
-      .doc(input.id);
+    const state = CampaignEngine.create({
+      ...input,
+      countryPool: COUNTRY_CATALOGUE,
+    }, this.randomInteger, Date.now());
 
-    /*
-     * Repeating a creation request with the same ID
-     * returns the existing owned campaign.
-     */
-    return adminDb.runTransaction(
-      async (transaction) => {
-        const existing =
-          await transaction.get(reference);
+    const batch = adminDb.batch();
 
-        if (existing.exists) {
-          if (existing.data()?.deleting) {
-            throw new CampaignRequestError(
-              "This campaign is being deleted.",
-              409,
-            );
-          }
+    batch.create(reference, {
+      state,
+      lastEvent: null,
+      nextActionAt: 0,
+      populationSource: POPULATION_SOURCE,
+    });
 
-          const state =
-            existing.data()?.state as
-              | CampaignState
-              | undefined;
+    batch.create(reference.collection("events").doc("0"), {
+      revision: 0,
+      actorId: "system",
+      action: "setup",
+      message: "Campaign created.",
+      createdAt: state.createdAt,
+      dice: null,
+      reason: null,
+      fromId: null,
+      toId: null,
+      afterState: state,
+    });
 
-          if (
-            !state ||
-            state.playerId !== input.playerId
-          ) {
-            throw new CampaignRequestError(
-              "This campaign ID is unavailable.",
-              409,
-            );
-          }
+    try {
+      // Preconditions protect both documents; either both are created or neither is.
+      await batch.commit();
+      return state;
+    } catch (failure) {
+      const code =
+        typeof failure === "object" &&
+        failure !== null &&
+        "code" in failure
+          ? failure.code
+          : undefined;
 
-          return state;
-        }
+      if (
+        code !== 6 &&
+        code !== "already-exists" &&
+        code !== "ALREADY_EXISTS"
+      ) {
+        throw failure;
+      }
 
-        const state = CampaignEngine.create(
-          {
-            id: input.id,
-            playerId: input.playerId,
+      // Duplicate/retried requests return only the same owner's existing game.
+      const snapshot = await reference.get();
+      const existing = snapshot.data();
 
-            selectedCountryId:
-              input.selectedCountryId,
-
-            countryPool: COUNTRY_CATALOGUE,
-            difficulty: input.difficulty,
-          },
-
-          this.randomInteger,
-          Date.now(),
+      if (
+        !snapshot.exists ||
+        existing?.deleting ||
+        existing?.state?.playerId !== input.playerId
+      ) {
+        throw new CampaignRequestError(
+          "This campaign ID is unavailable or being deleted.",
+          409,
         );
+      }
 
-        transaction.create(reference, {
-          state,
-          lastEvent: null,
-          nextActionAt: 0,
-          populationSource: POPULATION_SOURCE,
-        });
-
-        transaction.create(
-          reference.collection("events").doc("0"),
-
-          {
-            revision: 0,
-            actorId: "system",
-            action: "setup",
-            message: "Campaign created.",
-            createdAt: state.createdAt,
-            dice: null,
-            reason: null,
-            fromId: null,
-            toId: null,
-            afterState: state,
-          },
-        );
-
-        return state;
-      },
-    );
+      return existing.state as CampaignState;
+    }
   }
 
   static async execute(input: {
@@ -192,6 +175,7 @@ export class CampaignRepository {
   }): Promise<{
     state: CampaignState;
     event: SavedCampaignEvent;
+    cooldownMs: number;
   }> {
     const { adminDb } = getAdminServices();
 
@@ -199,7 +183,7 @@ export class CampaignRepository {
       .collection("campaigns")
       .doc(input.id);
 
-    return adminDb.runTransaction(
+    const committed = await adminDb.runTransaction(
       async (transaction) => {
         const snapshot =
           await transaction.get(reference);
@@ -386,5 +370,10 @@ export class CampaignRepository {
         };
       },
     );
+
+    return {
+      ...committed,
+      cooldownMs: Math.max(0, committed.state.updatedAt + 300 - Date.now()),
+    };
   }
 }

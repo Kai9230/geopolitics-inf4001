@@ -126,7 +126,9 @@ export default function HowToPlay() {
               Rolls [1,4] against [2,3] cause one
               loss on each side. Three attackers
               against five defenders also roll
-              two per side.
+              two per side. Each saved dice exchange can show a plane flight. Multiple
+              exchanges against the same target remain one attack. Repeated notifications
+              for an exchange do not launch extra flights.
             </p>
 
             <p className={s.muted}>
@@ -220,6 +222,8 @@ export default function HowToPlay() {
               use your diplomatic action. Accepted treaties last through the next round.
               NPCs value useful deterrence against a stronger rival and prefer other targets
               while allied. Attacking an ally breaks the treaty immediately.
+              Keeping a treaty until expiry adds five reputation. Ending it early costs five;
+              attacking an ally costs 25. Reputation affects future acceptance.
               Alliances never share soldiers or victory: one participant must control all ten nations.
             </p>
           </section>

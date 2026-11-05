@@ -35,7 +35,8 @@ export interface ActiveAttack {
 
 export interface CampaignState {
   schemaVersion: 1;
-  treaties?: { members: string[]; expiresRound: number }[];
+  treaties?: { members: string[]; expiresRound: number; formedRound?: number; sharedRivalId?: string | null }[];
+  reputation?: Record<string, number>;
   diplomacyUsed?: boolean;
 
   id: string;

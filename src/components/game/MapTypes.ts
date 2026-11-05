@@ -1,4 +1,5 @@
 import type { Country } from "../../types";
+import type { CampaignState } from "../../types/game-state";
 
 export interface MapDiceResult {
   attacker: number[];
@@ -14,6 +15,8 @@ export interface MapBattleAnimation {
   active: boolean;
   fast?: boolean;
   showAircraft?: boolean;
+  attackKey?: string;
+  playbackKey?: string;
   attackerColor: string;
   defenderColor: string;
   dice: MapDiceResult | null;
@@ -31,7 +34,14 @@ const NPC_COLORS = [
   "#b7c7da",
 ];
 
+export function participantColor(state: CampaignState, owner: string): string {
+  if (owner === "human") return "#f4c430";
+  const index = state.participants.filter(p => p.kind === "npc").findIndex(p => p.id === owner);
+  return NPC_COLORS[Math.max(0,index) % NPC_COLORS.length];
+}
+
 export function getFactionColor(country: Country): string {
+  if (country.factionColor) return country.factionColor;
   if (country.isPlayer) return "#f4c430";
 
   const id = country.ownerId || country.id;

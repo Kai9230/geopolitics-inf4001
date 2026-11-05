@@ -14,6 +14,7 @@ import type { Country } from "../../types";
 import centres from "../../data/country-centres.json";
 
 import BattleEffects from "./BattleEffects";
+import { FlightLedger } from "@/lib/engine/BattleVisuals";
 
 import {
   getFactionColor,
@@ -69,6 +70,7 @@ export function RiskMap({
 
   const layer = useRef<SVGGElement>(null);
   const frame = useRef(0);
+  const flights = useRef(new FlightLedger());
   const panNow = useRef({ x: 0, y: 0 });
   const drag = useRef<DragState | null>(null);
 
@@ -599,8 +601,10 @@ export function RiskMap({
                 battleAnimation.defenderColor
               }
               dice={battleAnimation.dice}
-              showAircraft={battleAnimation.showAircraft}
-              fast={battleAnimation.fast}
+              id={battleAnimation.id}
+              attackKey={battleAnimation.attackKey ?? `${battleAnimation.fromId}:${battleAnimation.toId}:${battleAnimation.id}`}
+              playbackKey={battleAnimation.playbackKey ?? "live"}
+              ledger={flights}
             />
           )}
         </g>

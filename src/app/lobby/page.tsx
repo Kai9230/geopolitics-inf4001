@@ -296,6 +296,7 @@ export default function LobbyPage() {
     }
 
     try {
+      router.prefetch(`/game/${attempt.id}`);
       await CampaignClient.create({
         id: attempt.id,
         selectedCountryId: countryId,

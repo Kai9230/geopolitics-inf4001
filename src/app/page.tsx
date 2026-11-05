@@ -1,132 +1,9 @@
-// "use client";
-// import { useState, useEffect } from "react";
-// import { useRouter } from "next/navigation";
-// import { auth } from "../lib/firebase/config";
-// import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-// import { ParticleBackground } from "../components/ParticleBackground";
-// import { MusicPlayer } from "../lib/audio/MusicPlayer";
-
-// export default function AuthPage() {
-//   const [isLogin, setIsLogin] = useState(true);
-//   const [email, setEmail] = useState("");
-//   const [password, setPassword] = useState("");
-//   const [error, setError] = useState("");
-//   const router = useRouter();
-
-//   // Play login music on first user click (browsers block autoplay)
-//   useEffect(() => {
-//     const start = () => MusicPlayer.play("/sounds/login-theme.mp3", true, 0.3);
-//     document.addEventListener("click", start, { once: true });
-//     return () => document.removeEventListener("click", start);
-//   }, []);
-
-//   const handleAuth = async (e: React.FormEvent) => {
-//     e.preventDefault();
-//     setError("");
-//     try {
-//       if (isLogin) await signInWithEmailAndPassword(auth, email, password);
-//       else await createUserWithEmailAndPassword(auth, email, password);
-//       router.push("/lobby");
-//     } catch (err: unknown) {
-//       if (err instanceof Error) setError(err.message);
-//       else setError("An unexpected error occurred");
-//     }
-//   };
-
-//   return (
-//     <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
-//       {/* 1. Aurora Background */}
-//       <div className="aurora-bg">
-//         <div className="aurora-blob blob-gold"></div>
-//         <div className="aurora-blob blob-blue"></div>
-//         <div className="aurora-blob blob-red"></div>
-//       </div>
-
-//       {/* 2. The Cinematic Earth */}
-//       <div className="earth-container">
-//         <div className="earth-halo"></div>
-//         <div className="earth-sphere">
-//           <div className="earth-continents"></div>
-//         </div>
-//       </div>
-
-//       {/* 3. Gold Particles */}
-//       <ParticleBackground />
-
-//       {/* 4. Texture Overlays */}
-//       <div className="noise-overlay"></div>
-//       <div className="vignette"></div>
-
-//       {/* 5. Login Panel */}
-//       <div className="glass-panel p-10 w-full max-w-md relative z-10 mx-4">
-//         <div className="text-center mb-10">
-//           <h1 className="text-3xl md:text-4xl tracking-[0.15em] font-black uppercase title-gold mb-3 whitespace-nowrap">
-//             Geopolitics
-//           </h1>
-//           <p className="text-[#f4c430] text-xs font-bold tracking-[0.4em] uppercase opacity-70">
-//             Ten Nations · One Throne
-//           </p>
-//         </div>
-        
-//         {error && (
-//           <div className="bg-red-900/50 text-red-400 p-3 rounded mb-6 text-sm border border-red-500/50 text-center uppercase tracking-wider">
-//             {error}
-//           </div>
-//         )}
-        
-//         <form onSubmit={handleAuth} className="space-y-5">
-//           <div>
-//             <label className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">
-//               Email
-//             </label>
-//             <input 
-//               type="email" 
-//               value={email} 
-//               onChange={e => setEmail(e.target.value)} 
-//               className="w-full bg-black/60 border border-white/10 rounded-lg p-4 text-white focus:outline-none focus:border-[#f4c430] focus:ring-1 focus:ring-[#f4c430] transition-all duration-300" 
-//               required 
-//             />
-//           </div>
-//           <div>
-//             <label className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">
-//               Password
-//             </label>
-//             <input 
-//               type="password" 
-//               value={password} 
-//               onChange={e => setPassword(e.target.value)} 
-//               className="w-full bg-black/60 border border-white/10 rounded-lg p-4 text-white focus:outline-none focus:border-[#f4c430] focus:ring-1 focus:ring-[#f4c430] transition-all duration-300" 
-//               required 
-//             />
-//           </div>
-//           <button 
-//             type="submit" 
-//             className="w-full bg-linear-to-r from-[#f4c430] to-[#fbbf24] text-black font-black p-4 rounded-lg hover:shadow-[0_0_40px_rgba(244,196,48,0.6)] hover:-translate-y-0.5 transition-all duration-300 tracking-[0.2em] uppercase mt-4"
-//           >
-//             {isLogin ? "Sign In" : "Register"}
-//           </button>
-//         </form>
-        
-//         <div className="mt-8 pt-6 border-t border-white/10 text-center">
-//           <p 
-//             className="text-[10px] text-gray-500 cursor-pointer hover:text-[#f4c430] transition-colors uppercase tracking-[0.2em] font-bold" 
-//             onClick={() => setIsLogin(!isLogin)}
-//           >
-//             {isLogin ? "No account? Register" : "Already registered? Sign In"}
-//           </p>
-//         </div>
-//       </div>
-//     </div>
-//   );
-// }
-
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { auth } from "../lib/firebase/config";
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { ParticleBackground } from "../components/ParticleBackground";
-import { MusicPlayer } from "../lib/audio/MusicPlayer";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -134,29 +11,25 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const router = useRouter();
-
-  // Play login music on first click, stop when leaving page
-  useEffect(() => {
-    const start = () => MusicPlayer.play("/sounds/login-theme.mp3", true, 0.3);
-    document.addEventListener("click", start, { once: true });
-    
-    return () => {
-      document.removeEventListener("click", start);
-      MusicPlayer.stop(); 
-    };
-  }, []);
+  const pending = useRef(false);
+  const [busy, setBusy] = useState(false);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (pending.current) return;
+    pending.current = true;
+    setBusy(true);
     setError("");
     try {
       if (isLogin) await signInWithEmailAndPassword(auth, email, password);
       else await createUserWithEmailAndPassword(auth, email, password);
       
-      MusicPlayer.stop(); // Stop login music right before redirecting
       router.push("/lobby");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      pending.current = false;
+      setBusy(false);
     }
   };
 
@@ -201,9 +74,9 @@ export default function AuthPage() {
         
         <form onSubmit={handleAuth} className="space-y-5">
           <div>
-            <label className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">Email</label>
+            <label htmlFor="auth-email" className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">Email</label>
             <input 
-              type="email" 
+              id="auth-email" autoComplete="email" type="email" 
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               className="w-full bg-black/60 border border-white/10 rounded-lg p-4 text-white focus:outline-none focus:border-[#f4c430]" 
@@ -211,9 +84,9 @@ export default function AuthPage() {
             />
           </div>
           <div>
-            <label className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">Password</label>
+            <label htmlFor="auth-password" className="block text-[10px] font-bold mb-2 text-gray-400 uppercase tracking-[0.2em]">Password</label>
             <input 
-              type="password" 
+              id="auth-password" autoComplete={isLogin ? "current-password" : "new-password"} minLength={isLogin ? undefined : 6} type="password" 
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               className="w-full bg-black/60 border border-white/10 rounded-lg p-4 text-white focus:outline-none focus:border-[#f4c430]" 
@@ -221,20 +94,20 @@ export default function AuthPage() {
             />
           </div>
           <button 
-            type="submit" 
+            type="submit" disabled={busy} 
             className="w-full bg-linear-to-r from-[#f4c430] to-[#fbbf24] text-black font-black p-4 rounded-lg hover:shadow-[0_0_40px_rgba(244,196,48,0.6)] transition tracking-[0.2em] uppercase mt-4"
           >
-            {isLogin ? "Sign In" : "Register"}
+            {busy ? "Please wait…" : isLogin ? "Sign In" : "Register"}
           </button>
         </form>
         
         <div className="mt-8 pt-6 border-t border-white/10 text-center">
-          <p 
+          <button type="button" disabled={busy}
             className="text-[10px] text-gray-500 cursor-pointer hover:text-[#f4c430] uppercase tracking-[0.2em] font-bold" 
-            onClick={() => setIsLogin(!isLogin)}
+            onClick={() => { if (!busy) setIsLogin(!isLogin); }}
           >
             {isLogin ? "No account? Register" : "Already registered? Sign In"}
-          </p>
+          </button>
         </div>
       </div>
     </div>

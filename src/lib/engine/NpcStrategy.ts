@@ -6,6 +6,8 @@ import type {
   Difficulty,
 } from "../../types/game-state";
 
+import { DiplomacyRules } from "./DiplomacyRules";
+
 export interface NpcDecision {
   action: CampaignAction;
   reason: string;
@@ -180,7 +182,7 @@ export class NpcStrategy {
     if (!state.diplomacyUsed && rival && rival.strength > mine * 1.4) {
       const partner = strengths.find(p => p.kind === "npc" && p.id !== "human" &&
         p.id !== actorId && p.id !== rival.id && p.strength > 0 &&
-        mine + p.strength > rival.strength && !(state.treaties ?? []).some(t =>
+        mine + p.strength > rival.strength && DiplomacyRules.evaluate(state,actorId,p.id).accepted && !(state.treaties ?? []).some(t =>
           t.expiresRound >= state.round && t.members.includes(actorId) && t.members.includes(p.id)));
       if (partner) return {
         action: { type: "diplomacy", targetId: partner.id, operation: "offer" },
@@ -311,6 +313,7 @@ export class NpcStrategy {
         `${strongest.name} attacks ` +
         `${candidate.country.name} after comparing ` +
         "defensive strength, conquest rewards and active alliances" +
+        (state.round > 12 ? "; late-game pressure prioritises defeating concentrated enemy armies" : "") +
         (state.difficulty === "hard"
           ? ", including the opportunity to eliminate an opponent."
           : "."),

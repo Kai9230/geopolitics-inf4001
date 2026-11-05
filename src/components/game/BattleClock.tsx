@@ -11,7 +11,6 @@ export default function BattleClock({ id, fast, done }: {
   useEffect(() => {
     let frame = 0, previous = 0, elapsed = 0;
     let impact = false;
-    let map: SVGSVGElement | null = null;
     const effects = new Set<Animation>();
     const stage = document.querySelector(`[data-battle-id="${id}"]`);
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -30,11 +29,6 @@ export default function BattleClock({ id, fast, done }: {
       elapsed = Math.min(2650, elapsed + delta * (settings.current.fast ? 2.5 : 1));
       const visual = reduced ? 2650 : elapsed;
       effects.forEach(effect => { effect.currentTime = visual; });
-      if (!map) {
-        map = document.querySelector<SVGSVGElement>(".map-panel svg");
-        map?.pauseAnimations?.();
-      }
-      map?.setCurrentTime?.(visual / 1000);
       window.dispatchEvent(new CustomEvent("geopolitics-battle-frame", {
         detail: { id, elapsed: visual },
       }));

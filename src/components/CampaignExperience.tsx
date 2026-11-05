@@ -38,7 +38,6 @@ import {
 
 import type {
   CampaignAction,
-  CampaignEvent,
   CampaignState,
 } from "@/types/game-state";
 
@@ -57,6 +56,7 @@ const MiniatureBattle = dynamic(() => import("@/components/game/MiniatureBattle"
 
 import {
   getFactionColor,
+  participantColor,
   type MapBattleAnimation,
 } from "@/components/game/MapTypes";
 import s from "@/components/game/CampaignExperience.module.css";
@@ -65,134 +65,13 @@ import CampaignExtras from "@/components/game/CampaignExtras";
 import Image from "next/image";
 import Clock from "@/components/game/BattleClock";
 import { ReplayRules } from "@/lib/engine/ReplayRules";
+import { exchangeVisualKey } from "@/lib/engine/BattleVisuals";
 
-type Event = Omit<
-  CampaignEvent,
-  "action"
-> & {
-  action: string;
-  reason?: string | null;
-  fromId?: string | null;
-  toId?: string | null;
-  afterState: CampaignState;
-  commentary?: { text?: string; source?: string; status?: string };
-};
-
-type Model = {
-  live: CampaignState | null;
-  events: Event[];
-  cursor: number | null;
-  playing: Event | null;
-};
-
-type Update =
-  | {
-      type: "live";
-      state: CampaignState;
-    }
-  | {
-      type: "events";
-      events: Event[];
-    }
-  | {
-      type: "finish";
-      revision: number;
-    };
-
-const initial: Model = {
-  live: null,
-  events: [],
-  cursor: null,
-  playing: null,
-};
-
-function queue(model: Model): Model {
-  if (
-    model.cursor === null ||
-    model.playing
-  ) {
-    return model;
-  }
-
-  let cursor = model.cursor;
-
-  for (const event of model.events) {
-    if (event.revision <= cursor) {
-      continue;
-    }
-
-    if (
-      event.dice &&
-      event.fromId &&
-      event.toId
-    ) {
-      return {
-        ...model,
-        cursor,
-        playing: event,
-      };
-    }
-
-    cursor = event.revision;
-  }
-
-  return {
-    ...model,
-    cursor,
-  };
-}
-
-function reducer(
-  model: Model,
-  action: Update,
-): Model {
-  if (action.type === "live") {
-    if (
-      model.live &&
-      action.state.revision <
-        model.live.revision
-    ) {
-      return model;
-    }
-
-    return queue({
-      ...model,
-      live: action.state,
-    });
-  }
-
-  if (action.type === "events") {
-    const events = [
-      ...action.events,
-    ].sort(
-      (a, b) =>
-        a.revision - b.revision,
-    );
-
-    return queue({
-      ...model,
-      events,
-
-      cursor:
-        model.cursor ??
-        events.at(-1)?.revision ??
-        null,
-    });
-  }
-
-  if (
-    model.playing?.revision !==
-    action.revision
-  ) {
-    return model;
-  }
-
-  return queue({
-    ...model,
-    playing: null,
-    cursor: action.revision,
-  });
-}
+import {
+  campaignReducer as reducer,
+  createdCampaignModel,
+  type PresentedEvent as Event,
+} from "@/lib/engine/CampaignPresentation";
 
 function countries(
   state: CampaignState,
@@ -203,6 +82,7 @@ function countries(
 
       isPlayer:
         country.ownerId === "human",
+      factionColor: participantColor(state,country.ownerId),
     }),
   );
 }
@@ -239,7 +119,8 @@ function animation(
 
   return {
     id: event.revision,
-    showAircraft: state.activeAttack?.exchangeNumber === 0,
+    attackKey: exchangeVisualKey(state, attacker.id, defender.id, event.revision),
+    playbackKey: "live",
     fromId: attacker.id,
     toId: defender.id,
     active,
@@ -269,7 +150,11 @@ export default function CampaignExperience({
   gameId: string;
 }) {
   const [model, dispatch] =
-    useReducer(reducer, initial);
+    useReducer(
+      reducer,
+      gameId,
+      id => createdCampaignModel(CampaignClient.createdState(id))
+    );
 
   const [uid, setUid] =
     useState<string | null>(null);
@@ -548,11 +433,12 @@ export default function CampaignExperience({
               live,
             );
 
-        nextRequestAt.current = Date.now() + 320;
+        nextRequestAt.current = Date.now() + (result.cooldownMs ?? 320);
         if (mounted.current) {
           dispatch({
-            type: "live",
+            type: "confirmed",
             state: result.state,
+            event: { ...result.event, afterState: result.state },
           });
 
           setPaused(false);
@@ -753,7 +639,10 @@ export default function CampaignExperience({
     history !== null ? replay && replayDone !== history : !!model.playing,
   );
   // Each replay run has its own animation identity, even for the same saved roll.
-  if (anim && history !== null) anim.id = -(anim.id + 1 + replayRun * 1000000);
+  if (anim && history !== null) {
+    anim.id = -(anim.id + 1 + replayRun * 1000000);
+    anim.playbackKey = `replay:${replayRun}`;
+  }
 
   function select(id: string): void {
     if (!live) return;
@@ -1185,7 +1074,7 @@ export default function CampaignExperience({
 
                 <small>
                   {anim.active
-                    ? "RESOLVING EXCHANGE"
+                    ? `EXCHANGE ${(battleBefore?.activeAttack?.exchangeNumber ?? 0) + 1} · SAME ATTACK`
                     : "RECORDED RESULT"}
                 </small>
               </header>

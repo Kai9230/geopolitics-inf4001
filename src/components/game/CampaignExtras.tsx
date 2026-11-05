@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import type { CampaignAction, CampaignState } from "@/types/game-state";
 import s from "./CampaignExperience.module.css";
+import { DiplomacyRules } from "@/lib/engine/DiplomacyRules";
 
 export default function CampaignExtras({ state, displayState, enabled, showResult, submit, replay, mode = "overview" }: {
   mode?: "overview" | "diplomacy";
@@ -25,6 +26,8 @@ export default function CampaignExtras({ state, displayState, enabled, showResul
   const treaty = treaties.find(t => t.members.includes(target));
   const partner = opponents.find(p => p.id === target);
   const winner = state.participants.find(p => p.id === state.winnerId);
+  const proposal = partner ? DiplomacyRules.evaluate(state,"human",partner.id) : null;
+  const reputation = DiplomacyRules.reputation(state,"human");
   const canNegotiate = enabled && !state.diplomacyUsed && !!partner;
   return <div className={mode === "overview" ? s.extras : s.diplomacySlot}>
     {mode === "overview" && <section className={s.overview} aria-label="Campaign overview">
@@ -47,9 +50,11 @@ export default function CampaignExtras({ state, displayState, enabled, showResul
     </section>}
     {mode === "diplomacy" && state.status === "active" && <section className={`${s.panel} ${s.diplomacy}`} aria-label="Alliances and diplomacy">
       <div>
-        <small>DIPLOMATIC CHANNEL</small>
+        <small>LIVE DIPLOMATIC CHANNEL</small>
         <h2>Alliances & diplomacy</h2>
-        <p>Negotiate a temporary alliance once per turn. NPCs accept when your strength or a common threat makes cooperation worthwhile.</p>
+        <p>Negotiate one temporary alliance per turn. NPCs weigh army strength, a common threat and your record of keeping promises.</p>
+        <p className={s.reputation}>Diplomatic reputation <strong>{reputation} / 100</strong></p>
+        <p className={s.hint}>A treaty kept until expiry adds 5 reputation. Ending it early costs 5; attacking an ally costs 25.</p>
         <p className={s.hint}>Allies prefer other targets. You may attack any enemy, including an ally, but doing so breaks that treaty. Each nation retains control of its troops; victory belongs to one participant.</p>
       </div>
       <div>
@@ -63,6 +68,10 @@ export default function CampaignExtras({ state, displayState, enabled, showResul
         </label>
         {partner && <p>{partner.name} controls {state.countries.filter(c => c.ownerId === partner.id).length} countries.
           {treaty ? ` Treaty active through round ${treaty.expiresRound}.` : " No active treaty."}</p>}
+        {proposal && !treaty && <div className={s.proposal}>
+          <strong>{proposal.accepted ? "Favourable proposal" : "Unfavourable proposal"}</strong>
+          <p>{proposal.reason}</p>
+        </div>}
         <button className={s.primary} disabled={!canNegotiate}
           onClick={() => submit({ type: "diplomacy", targetId: target, operation: treaty ? "break" : "offer" })}>
           {treaty ? "End treaty" : "Offer alliance"}
@@ -75,6 +84,7 @@ export default function CampaignExtras({ state, displayState, enabled, showResul
         {treaties.length ? treaties.map(t => <span key={t.members.join(":")}>
           Ally: {state.participants.find(p => p.id === t.members.find(id => id !== "human"))?.name}
           {" · "}through round {t.expiresRound}
+          {t.sharedRivalId && ` · Common rival: ${state.participants.find(p => p.id === t.sharedRivalId)?.name}`}
         </span>) : <span>No active alliances</span>}
       </div>
     </section>}

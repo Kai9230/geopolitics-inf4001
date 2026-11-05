@@ -1,1 +1,50 @@
-{"indexes":[],"fieldOverrides":[]}
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "events",
+      "fieldPath": "afterState",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "dice",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "events",
+      "fieldPath": "commentary",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "lastEvent",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "state.countries",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "state.participants",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "state.turnOrder",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "state.treaties",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "campaigns",
+      "fieldPath": "state.activeAttack",
+      "indexes": []
+    }
+  ]
+}

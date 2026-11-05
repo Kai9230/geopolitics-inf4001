@@ -138,12 +138,14 @@ const requestSchema =
 function json(
   body: unknown,
   status = 200,
+  timing?: string,
 ): Response {
   return Response.json(body, {
     status,
 
     headers: {
       "Cache-Control": "no-store",
+      ...(timing ? { "Server-Timing": timing } : {}),
 
       "X-Content-Type-Options":
         "nosniff",
@@ -154,6 +156,26 @@ function json(
 export async function POST(
   request: Request,
 ): Promise<Response> {
+  const started = performance.now();
+  let authMs = 0, databaseMs = 0;
+
+  const respond = (body: unknown, status = 200) => json(
+    body,
+    status,
+    `auth;dur=${authMs.toFixed(1)}, database;dur=${databaseMs.toFixed(1)}, total;dur=${(performance.now()-started).toFixed(1)}`
+  );
+
+  async function database<T>(
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const begin = performance.now();
+    try {
+      return await operation();
+    } finally {
+      databaseMs += performance.now() - begin;
+    }
+  }
+
   try {
     const authorization =
       request.headers.get(
@@ -165,7 +187,7 @@ export async function POST(
         "Bearer ",
       )
     ) {
-      return json(
+      return respond(
         {
           error:
             "Sign in before making a move.",
@@ -182,7 +204,7 @@ export async function POST(
       !token ||
       token.length > 10_000
     ) {
-      return json(
+      return respond(
         {
           error:
             "Invalid authentication.",
@@ -195,6 +217,7 @@ export async function POST(
       getAdminServices();
 
     let playerId: string;
+    const authStarted = performance.now();
 
     try {
       const decoded =
@@ -204,8 +227,9 @@ export async function POST(
         );
 
       playerId = decoded.uid;
+      authMs = performance.now() - authStarted;
     } catch {
-      return json(
+      return respond(
         {
           error:
             "Your session is invalid. Sign in again.",
@@ -224,7 +248,7 @@ export async function POST(
         "application/json",
       )
     ) {
-      return json(
+      return respond(
         {
           error:
             "Send an application/json request.",
@@ -241,7 +265,7 @@ export async function POST(
       request.body?.getReader();
 
     if (!reader) {
-      return json(
+      return respond(
         {
           error:
             "The request body is missing.",
@@ -265,7 +289,7 @@ export async function POST(
       if (bytes > 16_384) {
         await reader.cancel();
 
-        return json(
+        return respond(
           {
             error:
               "The request body is too large.",
@@ -296,7 +320,7 @@ export async function POST(
         ),
       );
     } catch {
-      return json(
+      return respond(
         {
           error: "Invalid JSON.",
         },
@@ -308,7 +332,7 @@ export async function POST(
       requestSchema.safeParse(raw);
 
     if (!parsed.success) {
-      return json(
+      return respond(
         {
           error:
             "The campaign request is invalid.",
@@ -322,12 +346,9 @@ export async function POST(
     if (
       input.operation === "delete"
     ) {
-      await CampaignRepository.remove(
-        input.id,
-        playerId,
-      );
+      await database(() => CampaignRepository.remove(input.id, playerId));
 
-      return json({
+      return respond({
         deleted: true,
       });
     }
@@ -336,7 +357,7 @@ export async function POST(
       input.operation === "create"
     ) {
       const state =
-        await CampaignRepository.create({
+        await database(() => CampaignRepository.create({
           id: input.id,
           playerId,
 
@@ -345,16 +366,16 @@ export async function POST(
 
           difficulty:
             input.difficulty,
-        });
+        }));
 
-      return json({ state });
+      return respond({ state });
     }
 
     if (
       input.operation === "npc-step"
     ) {
       const result =
-        await CampaignRepository.execute({
+        await database(() => CampaignRepository.execute({
           id: input.id,
           playerId,
 
@@ -362,7 +383,7 @@ export async function POST(
             input.expectedRevision,
 
           mode: "npc",
-        });
+        }));
 
       if (result.event.dice) {
         publishCommentary(
@@ -371,11 +392,11 @@ export async function POST(
         );
       }
 
-      return json(result);
+      return respond(result);
     }
 
     const result =
-      await CampaignRepository.execute({
+      await database(() => CampaignRepository.execute({
         id: input.id,
         playerId,
 
@@ -384,7 +405,7 @@ export async function POST(
 
         mode: "human",
         action: input.action,
-      });
+      }));
 
     if (result.event.dice) {
       publishCommentary(
@@ -393,13 +414,13 @@ export async function POST(
       );
     }
 
-    return json(result);
+    return respond(result);
   } catch (error) {
     if (
       error instanceof
       CampaignRequestError
     ) {
-      return json(
+      return respond(
         {
           error: error.message,
         },
@@ -415,7 +436,7 @@ export async function POST(
         : "UnknownError",
     );
 
-    return json(
+    return respond(
       {
         error:
           "The server could not complete this action.",

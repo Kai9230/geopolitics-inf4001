@@ -1,0 +1,13 @@
+{
+  "backup": "C:\\Users\\Xenia Oliphant\\Desktop\\geopolitics-performance-backup-1793902184732",
+  "files": [
+    "src/lib/engine/CampaignPresentation.ts",
+    "src/components/CampaignExperience.tsx",
+    "src/lib/api/CampaignClient.ts",
+    "src/lib/db/CampaignRepository.ts",
+    "src/app/lobby/page.tsx",
+    "src/app/api/campaigns/route.ts",
+    "tests/specification.cjs",
+    "firestore.indexes.json"
+  ]
+}

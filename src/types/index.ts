@@ -14,6 +14,7 @@ export interface Country {
   soldiers: number;
   ownerId: string; 
   isPlayer: boolean;
+  factionColor?: string;
   x: number; 
   y: number; 
 }

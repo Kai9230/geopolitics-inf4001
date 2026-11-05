@@ -9,6 +9,16 @@ import type {
   Difficulty,
 } from "../../types/game-state";
 
+export type CampaignResponse = {
+  state: CampaignState;
+  event: CampaignEvent & {
+    reason?: string | null;
+    fromId?: string | null;
+    toId?: string | null;
+  };
+  cooldownMs?: number;
+};
+
 export class CampaignApiError extends Error {
   constructor(
     message: string,
@@ -20,6 +30,18 @@ export class CampaignApiError extends Error {
 }
 
 export class CampaignClient {
+  private static createdCampaign: CampaignState | null = null;
+
+  static createdState(id: string): CampaignState | null {
+    const state = this.createdCampaign;
+
+    return (
+      state?.id === id &&
+      state.revision === 0 &&
+      auth.currentUser?.uid === state.playerId
+    ) ? structuredClone(state) : null;
+  }
+
   static remove(
     id: string,
   ): Promise<{ deleted: boolean }> {
@@ -72,24 +94,24 @@ export class CampaignClient {
     return data as T;
   }
 
-  static create(input: {
+  static async create(input: {
     id: string;
     selectedCountryId: string;
     difficulty: Difficulty;
   }): Promise<{ state: CampaignState }> {
-    return this.post({
+    const result = await this.post<{ state: CampaignState }>({
       operation: "create",
       ...input,
     });
+
+    this.createdCampaign = result.state;
+    return result;
   }
 
   static act(
     state: CampaignState,
     action: CampaignAction,
-  ): Promise<{
-    state: CampaignState;
-    event: CampaignEvent;
-  }> {
+  ): Promise<CampaignResponse> {
     return this.post({
       operation: "human-action",
       id: state.id,
@@ -100,10 +122,7 @@ export class CampaignClient {
 
   static advanceNpc(
     state: CampaignState,
-  ): Promise<{
-    state: CampaignState;
-    event: CampaignEvent;
-  }> {
+  ): Promise<CampaignResponse> {
     return this.post({
       operation: "npc-step",
       id: state.id,

@@ -606,3 +606,8 @@
 .diplomacySlot { min-width: 0; }
 .diplomacySlot .diplomacy { grid-template-columns: minmax(0,1fr); }
 .commands { position: static; }
+
+.reputation { display:flex;justify-content:space-between;gap:12px;padding:12px 14px;border:1px solid #bda06155;border-radius:10px;background:linear-gradient(110deg,#bda06118,#0c1c2d);color:#d8e1ee;font-size:12px; }
+.reputation strong { color:#f6dc99;white-space:nowrap; }
+.proposal { padding:12px 14px;border-left:3px solid #69c9ad;border-radius:8px;background:#69c9ad10;color:#d8e1ee;font-size:12px; }
+.proposal p { margin:6px 0 0;line-height:1.6;color:#afbdce; }

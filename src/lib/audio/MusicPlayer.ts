@@ -1,169 +1,171 @@
-export type MusicScene =
-  | "login"
-  | "battle"
-  | "silent";
+
+export type MusicScene = "login" | "battle" | "silent";
+type Status = "idle" | "playing" | "blocked" | "error" | "paused" | "muted";
 
 export class MusicPlayer {
-  private static audio:
-    HTMLAudioElement | null = null;
-
+  private static audio: HTMLAudioElement | null = null;
+  private static scene: MusicScene = "silent";
   private static muted = false;
-  private static masterVolume = 1;
+  private static volume = 1;
   private static trackVolume = 0.3;
-
-  private static scene:
-    MusicScene = "silent";
-
   private static loaded = false;
+  private static status: Status = "idle";
+  private static listeners = new Set<() => void>();
+  private static readonly key = "geopolitics-music-settings";
 
-  private static listeners =
-    new Set<() => void>();
+  private static notify() {
+    this.listeners.forEach(listener => listener());
+  }
 
-  private static readonly key =
-    "geopolitics-music-settings";
+  private static setStatus(status: Status) {
+    if (this.status !== status) {
+      this.status = status;
+      this.notify();
+    }
+  }
 
   private static loadSettings() {
-    if (
-      typeof window === "undefined" ||
-      this.loaded
-    ) {
-      return;
-    }
+    if (typeof window === "undefined" || this.loaded) return;
 
     this.loaded = true;
-
-    this.scene = window.location.pathname.startsWith("/game/") ? "battle" : "login";
+    this.scene = window.location.pathname.startsWith("/game/")
+      ? "battle"
+      : "login";
 
     try {
-      const data = JSON.parse(
-        localStorage.getItem(
-          this.key,
-        ) || "null",
+      const saved = JSON.parse(
+        localStorage.getItem(this.key) || "null"
       );
 
-      if (data) {
-        if (
-          typeof data.muted ===
-          "boolean"
-        ) {
-          this.muted = data.muted;
-        }
+      if (typeof saved?.muted === "boolean") {
+        this.muted = saved.muted;
+      }
 
-        if (
-          typeof data.volume ===
-            "number" &&
-          Number.isFinite(
-            data.volume,
-          )
-        ) {
-          this.masterVolume =
-            Math.max(
-              0,
-              Math.min(
-                1,
-                data.volume,
-              ),
-            );
-        }
+      if (
+        typeof saved?.volume === "number" &&
+        Number.isFinite(saved.volume)
+      ) {
+        this.volume = Math.max(0, Math.min(1, saved.volume));
       }
     } catch {
-      // Audio still works if storage is unavailable.
+      // Storage is optional.
     }
   }
 
   private static save() {
-    if (
-      typeof window === "undefined"
-    ) {
-      return;
-    }
-
     try {
       localStorage.setItem(
         this.key,
-
         JSON.stringify({
           muted: this.muted,
-          volume:
-            this.masterVolume,
-        }),
+          volume: this.volume,
+        })
       );
     } catch {
-      // Preferences are optional.
+      // Storage is optional.
     }
   }
 
-  private static notify() {
-    this.listeners.forEach(
-      (listener) => listener(),
-    );
-  }
-
-  private static apply() {
-    if (!this.audio) return;
-
-    this.audio.muted = this.muted;
-
-    this.audio.volume =
-      this.trackVolume *
-      this.masterVolume;
-  }
-
-  private static start() {
+  private static ensure() {
     if (
       typeof window === "undefined" ||
-      document.hidden ||
-      this.muted ||
-      this.masterVolume === 0 ||
-      !this.audio ||
       this.scene === "silent"
     ) {
-      return;
+      return null;
     }
 
-    void this.audio
-      .play()
-      .catch(() => {
-        // A user interaction may be needed to unlock audio.
-      });
+    // Keep the same element across route and track changes.
+    if (!this.audio) {
+      this.audio = new Audio();
+      this.audio.preload = "metadata";
+    }
+
+    const src = new URL(
+      this.scene === "battle"
+        ? "/sounds/battle-theme.mp3"
+        : "/sounds/login-theme.mp3",
+      window.location.href
+    ).href;
+
+    if (this.audio.src !== src) {
+      this.audio.pause();
+      this.audio.src = src;
+    }
+
+    this.audio.loop = true;
+    this.audio.muted = this.muted;
+    this.audio.volume = this.volume * this.trackVolume;
+
+    return this.audio;
   }
 
-  static setScene(
-    scene: MusicScene,
-  ) {
-    if (
-      typeof window === "undefined"
-    ) {
-      return;
-    }
+  static resume() {
+    if (typeof window === "undefined") return;
 
     this.loadSettings();
 
-    const effectiveScene: MusicScene = scene;
+    const audio = this.ensure();
+    if (!audio) return;
 
-    this.scene = effectiveScene;
-
-    if (
-      effectiveScene === "silent"
-    ) {
-      this.stop();
-      this.notify();
+    if (this.muted || this.volume === 0) {
+      audio.pause();
+      this.setStatus("muted");
       return;
     }
 
-    this.play(
-      effectiveScene === "login"
-        ? "/sounds/login-theme.mp3"
-        : "/sounds/battle-theme.mp3",
+    if (document.hidden) {
+      this.pause();
+      return;
+    }
 
-      true,
+    if (!audio.paused) {
+      this.setStatus("playing");
+      return;
+    }
 
-      effectiveScene === "login"
-        ? 0.3
-        : 0.18,
-    );
+    const requestedSrc = audio.src;
 
-    this.notify();
+    void audio.play().then(() => {
+      if (audio.src === requestedSrc && !audio.paused) {
+        this.setStatus("playing");
+      }
+    }).catch((error: unknown) => {
+      if (
+        audio.src !== requestedSrc ||
+        this.scene === "silent" ||
+        this.muted
+      ) {
+        return;
+      }
+
+      const name =
+        error &&
+        typeof error === "object" &&
+        "name" in error
+          ? String(error.name)
+          : "";
+
+      if (name === "AbortError") return;
+
+      this.setStatus(
+        name === "NotAllowedError" ? "blocked" : "error"
+      );
+    });
+  }
+
+  static setScene(scene: MusicScene) {
+    if (typeof window === "undefined") return;
+
+    this.loadSettings();
+    this.scene = scene;
+    this.trackVolume = scene === "battle" ? 0.18 : 0.3;
+
+    if (scene === "silent") {
+      this.pause();
+      return;
+    }
+
+    this.resume();
   }
 
   static getScene() {
@@ -171,110 +173,60 @@ export class MusicPlayer {
     return this.scene;
   }
 
+  static getStatus() {
+    return this.status;
+  }
+
   static play(
     src: string,
     loop = true,
-    volume = 0.3,
+    volume = 0.3
   ) {
-    if (
-      typeof window === "undefined"
-    ) {
-      return;
-    }
-
     this.loadSettings();
 
     const allowed =
-      this.scene === "login"
-        ? "/sounds/login-theme.mp3"
-        : this.scene === "battle"
-          ? "/sounds/battle-theme.mp3"
+      this.scene === "battle"
+        ? "/sounds/battle-theme.mp3"
+        : this.scene === "login"
+          ? "/sounds/login-theme.mp3"
           : null;
 
     if (src !== allowed) return;
 
-    this.trackVolume =
-      Number.isFinite(volume)
-        ? Math.max(
-            0,
-            Math.min(1, volume),
-          )
-        : 0.3;
+    this.trackVolume = Number.isFinite(volume)
+      ? Math.max(0, Math.min(1, volume))
+      : 0.3;
 
-    const url = new URL(
-      src,
-      window.location.href,
-    ).href;
+    const audio = this.ensure();
+    if (audio) audio.loop = loop;
 
-    if (
-      this.audio?.src !== url
-    ) {
-      this.stop();
-
-      this.audio =
-        new Audio(url);
-
-      this.audio.preload =
-        "auto";
-    }
-
-    this.audio.loop = loop;
-
-    this.apply();
-    this.start();
+    this.resume();
   }
 
   static pause() {
     this.audio?.pause();
+    this.setStatus("paused");
   }
 
   static stop() {
-    if (!this.audio) return;
+    // Preserve the unlocked element so resume can recover.
+    this.pause();
 
-    const audio = this.audio;
-
-    this.audio = null;
-
-    audio.pause();
-    audio.removeAttribute("src");
-    audio.load();
-  }
-
-  static resume() {
-    if (
-      typeof window === "undefined"
-    ) {
-      return;
+    if (this.audio) {
+      this.audio.currentTime = 0;
     }
-
-    this.loadSettings();
-    this.apply();
-    this.start();
   }
 
-  static setMuted(
-    muted: boolean,
-  ) {
+  static setMuted(muted: boolean) {
     this.loadSettings();
-
     this.muted = muted;
-
-    this.apply();
-
-    if (muted) {
-      this.pause();
-    } else {
-      this.start();
-    }
-
     this.save();
+    this.resume();
     this.notify();
   }
 
   static toggleMute() {
-    this.loadSettings();
-    this.setMuted(!this.muted);
-
+    this.setMuted(!this.isMuted());
     return this.muted;
   }
 
@@ -283,51 +235,359 @@ export class MusicPlayer {
     return this.muted;
   }
 
-  static setVolume(
-    volume: number,
-  ) {
-    if (
-      !Number.isFinite(volume)
-    ) {
-      return;
-    }
+  static setVolume(volume: number) {
+    if (!Number.isFinite(volume)) return;
 
     this.loadSettings();
-
-    this.masterVolume =
-      Math.max(
-        0,
-        Math.min(1, volume),
-      );
-
-    this.apply();
-
-    if (
-      this.masterVolume === 0
-    ) {
-      this.pause();
-    } else {
-      this.start();
-    }
-
+    this.volume = Math.max(0, Math.min(1, volume));
     this.save();
+    this.resume();
     this.notify();
   }
 
   static getVolume() {
     this.loadSettings();
-    return this.masterVolume;
+    return this.volume;
   }
 
-  static subscribe(
-    listener: () => void,
-  ) {
+  static subscribe(listener: () => void) {
     this.listeners.add(listener);
 
     return () => {
-      this.listeners.delete(
-        listener,
-      );
+      this.listeners.delete(listener);
     };
   }
 }
+// export type MusicScene =
+//   | "login"
+//   | "battle"
+//   | "silent";
+
+// export class MusicPlayer {
+//   private static audio:
+//     HTMLAudioElement | null = null;
+
+//   private static muted = false;
+//   private static masterVolume = 1;
+//   private static trackVolume = 0.3;
+
+//   private static scene:
+//     MusicScene = "silent";
+
+//   private static loaded = false;
+
+//   private static listeners =
+//     new Set<() => void>();
+
+//   private static readonly key =
+//     "geopolitics-music-settings";
+
+//   private static loadSettings() {
+//     if (
+//       typeof window === "undefined" ||
+//       this.loaded
+//     ) {
+//       return;
+//     }
+
+//     this.loaded = true;
+
+//     this.scene = window.location.pathname.startsWith("/game/") ? "battle" : "login";
+
+//     try {
+//       const data = JSON.parse(
+//         localStorage.getItem(
+//           this.key,
+//         ) || "null",
+//       );
+
+//       if (data) {
+//         if (
+//           typeof data.muted ===
+//           "boolean"
+//         ) {
+//           this.muted = data.muted;
+//         }
+
+//         if (
+//           typeof data.volume ===
+//             "number" &&
+//           Number.isFinite(
+//             data.volume,
+//           )
+//         ) {
+//           this.masterVolume =
+//             Math.max(
+//               0,
+//               Math.min(
+//                 1,
+//                 data.volume,
+//               ),
+//             );
+//         }
+//       }
+//     } catch {
+//       // Audio still works if storage is unavailable.
+//     }
+//   }
+
+//   private static save() {
+//     if (
+//       typeof window === "undefined"
+//     ) {
+//       return;
+//     }
+
+//     try {
+//       localStorage.setItem(
+//         this.key,
+
+//         JSON.stringify({
+//           muted: this.muted,
+//           volume:
+//             this.masterVolume,
+//         }),
+//       );
+//     } catch {
+//       // Preferences are optional.
+//     }
+//   }
+
+//   private static notify() {
+//     this.listeners.forEach(
+//       (listener) => listener(),
+//     );
+//   }
+
+//   private static apply() {
+//     if (!this.audio) return;
+
+//     this.audio.muted = this.muted;
+
+//     this.audio.volume =
+//       this.trackVolume *
+//       this.masterVolume;
+//   }
+
+//   private static start() {
+//     if (
+//       typeof window === "undefined" ||
+//       document.hidden ||
+//       this.muted ||
+//       this.masterVolume === 0 ||
+//       !this.audio ||
+//       this.scene === "silent"
+//     ) {
+//       return;
+//     }
+
+//     void this.audio
+//       .play()
+//       .catch(() => {
+//         // A user interaction may be needed to unlock audio.
+//       });
+//   }
+
+//   static setScene(
+//     scene: MusicScene,
+//   ) {
+//     if (
+//       typeof window === "undefined"
+//     ) {
+//       return;
+//     }
+
+//     this.loadSettings();
+
+//     const effectiveScene: MusicScene = scene;
+
+//     this.scene = effectiveScene;
+
+//     if (
+//       effectiveScene === "silent"
+//     ) {
+//       this.stop();
+//       this.notify();
+//       return;
+//     }
+
+//     this.play(
+//       effectiveScene === "login"
+//         ? "/sounds/login-theme.mp3"
+//         : "/sounds/battle-theme.mp3",
+
+//       true,
+
+//       effectiveScene === "login"
+//         ? 0.3
+//         : 0.18,
+//     );
+
+//     this.notify();
+//   }
+
+//   static getScene() {
+//     this.loadSettings();
+//     return this.scene;
+//   }
+
+//   static play(
+//     src: string,
+//     loop = true,
+//     volume = 0.3,
+//   ) {
+//     if (
+//       typeof window === "undefined"
+//     ) {
+//       return;
+//     }
+
+//     this.loadSettings();
+
+//     const allowed =
+//       this.scene === "login"
+//         ? "/sounds/login-theme.mp3"
+//         : this.scene === "battle"
+//           ? "/sounds/battle-theme.mp3"
+//           : null;
+
+//     if (src !== allowed) return;
+
+//     this.trackVolume =
+//       Number.isFinite(volume)
+//         ? Math.max(
+//             0,
+//             Math.min(1, volume),
+//           )
+//         : 0.3;
+
+//     const url = new URL(
+//       src,
+//       window.location.href,
+//     ).href;
+
+//     if (
+//       this.audio?.src !== url
+//     ) {
+//       this.stop();
+
+//       this.audio =
+//         new Audio(url);
+
+//       this.audio.preload =
+//         "metadata";
+//     }
+
+//     this.audio.loop = loop;
+
+//     this.apply();
+//     this.start();
+//   }
+
+//   static pause() {
+//     this.audio?.pause();
+//   }
+
+//   static stop() {
+//     if (!this.audio) return;
+
+//     const audio = this.audio;
+
+//     this.audio = null;
+
+//     audio.pause();
+//     audio.removeAttribute("src");
+//     audio.load();
+//   }
+
+//   static resume() {
+//     if (
+//       typeof window === "undefined"
+//     ) {
+//       return;
+//     }
+
+//     this.loadSettings();
+//     this.apply();
+//     this.start();
+//   }
+
+//   static setMuted(
+//     muted: boolean,
+//   ) {
+//     this.loadSettings();
+
+//     this.muted = muted;
+
+//     this.apply();
+
+//     if (muted) {
+//       this.pause();
+//     } else {
+//       this.start();
+//     }
+
+//     this.save();
+//     this.notify();
+//   }
+
+//   static toggleMute() {
+//     this.loadSettings();
+//     this.setMuted(!this.muted);
+
+//     return this.muted;
+//   }
+
+//   static isMuted() {
+//     this.loadSettings();
+//     return this.muted;
+//   }
+
+//   static setVolume(
+//     volume: number,
+//   ) {
+//     if (
+//       !Number.isFinite(volume)
+//     ) {
+//       return;
+//     }
+
+//     this.loadSettings();
+
+//     this.masterVolume =
+//       Math.max(
+//         0,
+//         Math.min(1, volume),
+//       );
+
+//     this.apply();
+
+//     if (
+//       this.masterVolume === 0
+//     ) {
+//       this.pause();
+//     } else {
+//       this.start();
+//     }
+
+//     this.save();
+//     this.notify();
+//   }
+
+//   static getVolume() {
+//     this.loadSettings();
+//     return this.masterVolume;
+//   }
+
+//   static subscribe(
+//     listener: () => void,
+//   ) {
+//     this.listeners.add(listener);
+
+//     return () => {
+//       this.listeners.delete(
+//         listener,
+//       );
+//     };
+//   }
+// }
