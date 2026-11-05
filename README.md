@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GeoPolitics
 
-## Getting Started
+Next.js, React, TypeScript, Firebase Authentication,
+Cloud Firestore and Groq.
 
-First, run the development server:
+## Run
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+1. Install Node.js 22 or newer. Run npm ci in this folder.
+2. Preserve your existing .env.local. Fill any missing
+   variables shown in .env.example.
+3. Enable Firebase Email/Password Authentication and
+   Cloud Firestore.
+4. Publish src/lib/api/firestore.rules. With Firebase CLI,
+   choose your own project using firebase use --add,
+   then run:
+   firebase deploy --only firestore:rules,firestore:indexes
+5. Run npm test, npx tsc --noEmit, npm run lint,
+   then npm run dev.
+6. Open http://localhost:3000.
+7. Configure your own server-side GROQ_API_KEY.
+   Restart and verify a NEW battle exchange produces an
+   AI-labelled report. A fallback alone does not
+   demonstrate live AI.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Play
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Click your country with two or more soldiers, then an
+enemy. One attack is allowed each turn, with repeated
+automatic exchanges against the same target.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+After conquest, transfer and finish your turn.
+Transfer controls require two owned countries and no
+active attack. Place all reinforcements first.
 
-## Learn More
+How to Play explains the PDF rules.
 
-To learn more about Next.js, take a look at the following resources:
+## Five bonus areas
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Graphics and 3D animation.
+- Saved history and replay.
+- NPC difficulty.
+- Player analytics.
+- Anti-cheating through server-authoritative dice,
+  ownership, revisions and persistent attacks.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Architecture
 
-## Deploy on Vercel
+CampaignEngine and BattleRules own game rules.
+NpcStrategy makes reasoned decisions.
+CampaignRepository owns transactions and deletion.
+API routes authenticate and validate.
+CampaignExperience presents saved results.
+BattleCommentary describes confirmed facts.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Browser writes to campaign documents remain denied.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Deploy and submit
+
+Use a Node-compatible Next.js host, such as your
+Vercel project. This application needs server API
+routes; a static export is insufficient.
+
+Set the same environment variables on the host,
+including public Firebase values before building.
+Add the deployed domain to Firebase Authentication
+authorized domains. Run npm run build and deploy.
+
+Provide the PDF's source ZIP, hosted URL, application
+test credentials, database assessor access and this
+README.
+
+Create a dedicated demo account and arrange assessor
+database access privately.
+
+Never include .env.local, Admin keys, node_modules,
+.next or backups in the submitted source ZIP.
+
+## Final live checks
+
+Verify owner sign-in, new campaign, population armies,
+round-two reinforcements, click attack, paired unsorted
+dice and no-loss ties, stop, conquest reward, transfers,
+elimination/victory, visible NPC reasons/fast-forward,
+refresh protection, history, real Groq output, signed-out
+spectator, second-account rejection and disposable
+campaign deletion including its history.
+
+These source changes do not certify a live deployment,
+provider response or assessor permissions. Complete
+those checks on the configured deployed application
+before submission. No mark or selection is guaranteed.

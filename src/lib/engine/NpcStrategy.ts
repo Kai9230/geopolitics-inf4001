@@ -130,7 +130,7 @@ export class NpcStrategy {
       const available: number = attacker.soldiers - 1;
 
       const minimumRatio: number =
-        CONTINUE_RATIO[state.difficulty];
+        Math.max(0.7, CONTINUE_RATIO[state.difficulty] - Math.max(0, state.round - 8) * 0.08);
 
       if (
         available < 1 ||
@@ -177,7 +177,7 @@ export class NpcStrategy {
      * Normal and hard NPCs move spare troops into their
      * strongest country. Each donor keeps one soldier.
      */
-    if (state.difficulty !== "easy") {
+    if (state.difficulty !== "easy" || state.round > 8) {
       const donor: CampaignCountry | undefined = owned
         .slice(1)
         .find(
@@ -238,7 +238,11 @@ export class NpcStrategy {
             score:
               reward +
               eliminationBonus -
-              country.soldiers * 2,
+              country.soldiers * (state.round > 12 ? -0.5 : 2) -
+              ((state.treaties ?? []).some(t =>
+                t.expiresRound >= state.round &&
+                t.members.includes(actorId) &&
+                t.members.includes(country.ownerId)) ? 1000 : 0),
           };
         },
       )
@@ -254,7 +258,7 @@ export class NpcStrategy {
     const available: number = strongest.soldiers - 1;
 
     const minimumRatio: number =
-      START_RATIO[state.difficulty];
+      Math.max(0.85, START_RATIO[state.difficulty] - Math.max(0, state.round - 8) * 0.08);
 
     /*
      * Choose the highest-scoring target that also meets
@@ -289,7 +293,7 @@ export class NpcStrategy {
       reason:
         `${strongest.name} attacks ` +
         `${candidate.country.name} after comparing ` +
-        "defensive strength and conquest rewards" +
+        "defensive strength, conquest rewards and active alliances" +
         (state.difficulty === "hard"
           ? ", including the opportunity to eliminate an opponent."
           : "."),

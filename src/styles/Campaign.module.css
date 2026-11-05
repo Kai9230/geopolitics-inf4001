@@ -811,3 +811,31 @@
     transition: none;
   }
 }
+.rulesTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.rulesTable th,
+.rulesTable td {
+  text-align: left;
+  padding: 12px;
+  border-bottom: 1px solid #92a8c12c;
+}
+
+.rulesTable th {
+  color: #e9c777;
+}
+
+.instructions {
+  padding-left: 22px;
+  color: #bccbdf;
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.instructions li {
+  padding: 5px 0;
+}

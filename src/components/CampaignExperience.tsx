@@ -1,3 +1,4 @@
+// GeoPolitics completion 2026-11-05
 "use client";
 
 import {
@@ -43,17 +44,25 @@ import type {
 
 import type { Country } from "@/types";
 
-import { RiskMap } from "@/components/game/RiskMap";
+import dynamic from "next/dynamic";
+const RiskMap = dynamic(() => import("@/components/game/RiskMap").then(m => m.RiskMap), {
+  ssr: false, loading: () => <p role="status">Loading world map…</p>,
+});
 
 import { RollingDice } from "@/components/game/RollingDice";
 
-import { MiniatureBattle } from "@/components/game/MiniatureBattle";
+const MiniatureBattle = dynamic(() => import("@/components/game/MiniatureBattle").then(m => m.MiniatureBattle), {
+  ssr: false,
+});
 
 import {
   getFactionColor,
   type MapBattleAnimation,
 } from "@/components/game/MapTypes";
-import s from "./CampaignExperience.module.css";
+import s from "@/components/game/CampaignExperience.module.css";
+import CampaignAnalytics from "@/components/game/CampaignAnalytics";
+import CampaignExtras from "@/components/game/CampaignExtras";
+import Image from "next/image";
 
 type Event = Omit<
   CampaignEvent,
@@ -379,6 +388,10 @@ function Clock({
   return null;
 }
 
+function recordedReplayDuration(events: Event[], revision: number) {
+  return events.find(e => e.revision === revision)?.dice ? 3100 : 1700;
+}
+
 export default function CampaignExperience({
   gameId,
 }: {
@@ -428,6 +441,8 @@ export default function CampaignExperience({
 
   const stopIntent = useRef(false);
   const inFlight = useRef(false);
+  const nextRequestAt = useRef(0);
+  const submittedRevision = useRef(-1);
   const mounted = useRef(true);
   const alertKey = useRef("");
 
@@ -534,25 +549,19 @@ export default function CampaignExperience({
       ),
     );
 
+    const eventCache = new Map<string, Event>();
     const stopHistory = onSnapshot(
       historyQuery,
 
       (snapshot) => {
-        const events = snapshot.docs
-          .map(
-            (item) =>
-              item.data() as Event,
-          )
-          .filter(
-            (event) =>
-              event.afterState
-                ?.schemaVersion === 1,
-          );
-
-        dispatch({
-          type: "events",
-          events,
-        });
+        for (const change of snapshot.docChanges()) {
+          if (change.type === "removed") eventCache.delete(change.doc.id);
+          else {
+            const event = change.doc.data() as Event;
+            if (event.afterState?.schemaVersion === 1) eventCache.set(change.doc.id, event);
+          }
+        }
+        dispatch({ type: "events", events: [...eventCache.values()] });
       },
 
       () => {
@@ -569,6 +578,7 @@ export default function CampaignExperience({
   }, [gameId]);
 
   const live = model.live;
+
 
   const actor =
     live?.turnOrder[
@@ -626,17 +636,29 @@ export default function CampaignExperience({
         !live ||
         auth.currentUser?.uid !==
           live.playerId ||
-        inFlight.current
+        inFlight.current || submittedRevision.current === live.revision
       ) {
         return;
       }
 
       inFlight.current = true;
+      submittedRevision.current = live.revision;
 
       setBusy(true);
       setError("");
 
       try {
+        const delay =
+          nextRequestAt.current - Date.now();
+
+        if (delay > 0) {
+          await new Promise(resolve =>
+            setTimeout(resolve, delay)
+          );
+        }
+
+        if (!mounted.current) return;
+
         const result = action
           ? await CampaignClient.act(
               live,
@@ -646,6 +668,7 @@ export default function CampaignExperience({
               live,
             );
 
+        nextRequestAt.current = Date.now() + 320;
         if (mounted.current) {
           dispatch({
             type: "live",
@@ -655,6 +678,7 @@ export default function CampaignExperience({
           setPaused(false);
         }
       } catch (failure) {
+        submittedRevision.current = -1;
         if (mounted.current) {
           setError(
             failure instanceof Error
@@ -768,7 +792,7 @@ export default function CampaignExperience({
 
     alertKey.current = key;
 
-    SoundEngine.reinforce();
+    SoundEngine.turnStart();
 
     if (
       vibration &&
@@ -808,7 +832,7 @@ export default function CampaignExperience({
       } else {
         setReplay(false);
       }
-    }, 1600);
+    }, recordedReplayDuration(model.events, history));
 
     return () => {
       clearTimeout(timer);
@@ -835,8 +859,12 @@ export default function CampaignExperience({
         )?.afterState
     : null;
 
+  const replayBefore = replay && recorded?.dice
+    ? model.events.find(e => e.revision === recorded.revision - 1)?.afterState
+    : null;
+
   const view =
-    recorded?.afterState ??
+    replayBefore ?? recorded?.afterState ??
     before ??
     model.events.find(
       (event) =>
@@ -848,18 +876,7 @@ export default function CampaignExperience({
   const shown =
     history !== null
       ? recorded
-      : model.playing ??
-        [...model.events]
-          .reverse()
-          .find(
-            (event) =>
-              event.dice &&
-              event.revision <=
-                (
-                  model.cursor ??
-                  -1
-                ),
-          );
+      : model.playing ?? undefined;
 
   const battleBefore = shown
     ? [...model.events]
@@ -876,51 +893,82 @@ export default function CampaignExperience({
     shown,
     battleBefore,
 
-    history === null &&
-      !!model.playing,
+    history !== null ? replay : !!model.playing,
   );
 
-  function select(
-    id: string,
-  ): void {
-    if (
-      !selectable ||
-      !live
-    ) {
+  function select(id: string): void {
+    if (!live) return;
+
+    const blocked = !owner
+      ? "Sign in as this campaign's owner to make moves."
+      : history !== null
+        ? "Return to live play before selecting an attacker."
+        : live.status !== "active"
+          ? "This campaign has finished."
+          : !humanTurn
+            ? "Wait for YOUR TURN. Opponents are still playing."
+            : live.pendingReinforcements > 0
+              ? "Allocate all reinforcements in the command console first."
+              : live.activeAttack
+                ? "Your current attack is locked. Let it finish or stop it."
+                : live.attackUsed
+                  ? "Your one attack is complete. Transfer troops or finish your turn."
+                  : busy || inFlight.current
+                    ? "Your command is being saved. Please wait."
+                    : !caughtUp
+                      ? "The previous saved exchange is still being shown. Please wait."
+                      : "";
+
+    if (blocked) {
+      setNotice(blocked);
       return;
     }
 
-    const country =
-      live.countries.find(
-        (item) => item.id === id,
-      );
+    const country = live.countries.find(
+      item => item.id === id
+    );
 
     if (!country) return;
 
-    if (
-      country.ownerId === "human"
-    ) {
-      if (
-        country.soldiers < 2
-      ) {
+    if (country.ownerId === "human") {
+      if (country.soldiers < 2) {
         setError(
-          "This country needs two soldiers to attack. Reinforce or transfer troops first.",
+          "This country needs at least two soldiers to attack. " +
+          "Reinforce or transfer troops first."
         );
-
         return;
       }
 
-      setFrom(id);
+      setFrom(country.id);
       setTo("");
       setError("");
-    } else if (!from) {
-      setError(
-        "First click your country to attack from.",
+
+      setNotice(
+        "Attacker selected. Click an enemy country " +
+        "then confirm Launch attack."
       );
-    } else {
-      setTo(id);
-      setError("");
+
+      return;
     }
+
+    const source = live.countries.find(
+      item =>
+        item.id === from &&
+        item.ownerId === "human"
+    );
+
+    if (!source || source.soldiers < 2) {
+      setError(
+        "First select one of your countries with at least two soldiers."
+      );
+      return;
+    }
+
+    setTo(country.id);
+    setError("");
+    setNotice("");
+
+    setNotice("Target selected. Confirm Launch attack in the command console.");
   }
 
   if (
@@ -1014,7 +1062,7 @@ export default function CampaignExperience({
                   ? "Your target is locked · Exchanges continue automatically"
                   : phase === "finish"
                     ? "Attack complete · Transfer troops or finish your turn"
-                    : "Click your country, then an enemy target"
+                    : "Select your country and an enemy, then confirm Launch attack"
               : `${
                   ahead > 0
                     ? `${ahead} opponent turn${
@@ -1095,6 +1143,14 @@ export default function CampaignExperience({
         <span>{turnExplanation}</span>
       </section>
 
+      <CampaignExtras
+        state={live}
+        enabled={canAct && !live.activeAttack && live.pendingReinforcements === 0}
+        showResult={live.status === "completed" && caughtUp && history === null}
+        submit={action => { void send(action); }}
+        replay={() => { setHistory(model.events[0]?.revision ?? 0); setReplay(true); }}
+      />
+
       {error && (
         <div
           className={s.error}
@@ -1148,7 +1204,20 @@ export default function CampaignExperience({
                   ),
               }}
             >
-              <span>
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <Image
+                  src={country.flag}
+                  alt=""
+                  width={24}
+                  height={16}
+                  unoptimized
+                />
                 {country.name}
               </span>
 
@@ -1220,6 +1289,7 @@ export default function CampaignExperience({
 
           {anim ? (
             <section
+              key={`${history === null ? "live" : "replay"}:${anim.id}:${replay}`}
               className={[
                 s.battle,
 
@@ -1288,7 +1358,11 @@ export default function CampaignExperience({
             </section>
           )}
 
-          {model.playing && (
+          {history !== null && replay && recorded?.dice && (
+            <Clock key={`replay:${history}`} id={history} fast={false} done={() => {}} />
+          )}
+
+          {history === null && model.playing && (
             <Clock
               key={
                 model.playing.revision
@@ -1440,7 +1514,7 @@ export default function CampaignExperience({
                       2. Select an enemy.
                       <br />
 
-                      3. Confirm the route below.
+                      3. Confirm Launch attack.
                     </p>
 
                     <div
@@ -1483,9 +1557,7 @@ export default function CampaignExperience({
                           toId: to,
                         });
                       }}
-                    >
-                      Launch attack
-                    </button>
+                    >Launch attack</button>
                   </>
                 ) : (
                   <p>
@@ -1543,6 +1615,7 @@ export default function CampaignExperience({
           {owner &&
             own.length > 1 && (
               <Transfer
+                key={`${live.round}:${live.turnIndex}`}
                 state={live}
 
                 enabled={
@@ -1688,6 +1761,14 @@ export default function CampaignExperience({
                 ))}
             </div>
           </section>
+
+          <CampaignAnalytics
+            events={model.events.filter(
+              event =>
+                event.revision <=
+                (history ?? model.cursor ?? 0)
+            )}
+          />
 
           <button
             aria-pressed={vibration}
@@ -1995,9 +2076,16 @@ function Transfer({
           </button>
 
           <p className={s.hint}>
-            Keep one soldier behind.
-            Transfers pause during an attack.
+            Transfer between any two countries you own, before or after your attack.
+            Leave at least one soldier in the source. No transfers during an attack.
           </p>
+          {source && to && from !== to && amount >= 1 && amount < source.soldiers && (
+            <p role="status">
+              After transfer: {source.name} {source.soldiers - amount}; {own.find(c => c.id === to)?.name}{" "}
+              {(own.find(c => c.id === to)?.soldiers ?? 0) + amount} soldiers.
+              This does not end your turn.
+            </p>
+          )}
         </fieldset>
       </form>
     </section>

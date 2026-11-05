@@ -357,6 +357,7 @@ export class CampaignEngine {
 
     state.activeAttack = null;
     state.attackUsed = false;
+    state.diplomacyUsed = false;
     state.pendingReinforcements = 0;
 
     for (
@@ -430,7 +431,46 @@ export class CampaignEngine {
     let dice: CampaignActionResult["event"]["dice"] =
       null;
 
+    // Expired treaties never affect a new decision.
+    state.treaties = (state.treaties ?? []).filter(t => t.expiresRound >= state.round);
     switch (action.type) {
+      case "diplomacy": {
+        this.requireReady(state);
+        this.requireNoAttack(state);
+        if (state.diplomacyUsed) throw new Error("One diplomatic action per turn.");
+        const target = state.participants.find(p => p.id === action.targetId);
+        if (!target || target.id === actorId ||
+            !state.countries.some(c => c.ownerId === target.id)) {
+          throw new Error("Choose another participant still in the game.");
+        }
+        const existing = state.treaties.find(t =>
+          t.members.includes(actorId) && t.members.includes(target.id));
+        if (action.operation === "break") {
+          if (!existing) throw new Error("There is no active treaty to break.");
+          state.treaties = state.treaties.filter(t => t !== existing);
+          message = `Treaty with ${target.name} ended. Both sides may attack freely.`;
+        } else {
+          if (existing) throw new Error("A treaty already exists.");
+          const strength = (id: string) => state.countries
+            .filter(c => c.ownerId === id).reduce((n,c) => n + c.soldiers, 0);
+          const mine = strength(actorId);
+          const theirs = strength(target.id);
+          const threat = Math.max(0, ...state.participants
+            .filter(p => p.id !== actorId && p.id !== target.id)
+            .map(p => strength(p.id)));
+          // NPCs accept only if deterrence or a shared threat benefits them.
+          const accepted = mine >= theirs || threat > theirs;
+          if (accepted) {
+            state.treaties.push({ members: [actorId, target.id], expiresRound: state.round + 1 });
+            message = `${target.name} accepts a temporary alliance through round ${state.round + 1}: ` +
+              (mine >= theirs ? "your army provides useful deterrence." : "a stronger common rival threatens it.");
+          } else {
+            message = `${target.name} rejects the offer: it sees no strategic benefit.`;
+          }
+        }
+        state.diplomacyUsed = true;
+        break;
+      }
       case "allocate": {
         this.requireNoAttack(state);
 
@@ -602,6 +642,11 @@ export class CampaignEngine {
           );
         }
 
+        // Betrayal is permitted, so every country remains a legal target.
+        const betrayed = state.treaties.some(t =>
+          t.members.includes(actorId) && t.members.includes(defender.ownerId));
+        state.treaties = state.treaties.filter(t =>
+          !(t.members.includes(actorId) && t.members.includes(defender.ownerId)));
         state.attackUsed = true;
 
         state.activeAttack = {
@@ -612,7 +657,8 @@ export class CampaignEngine {
 
         message =
           `${attacker.name} begins an attack ` +
-          `against ${defender.name}.`;
+          `against ${defender.name}.` +
+          (betrayed ? " This attack breaks their alliance." : "");
 
         break;
       }

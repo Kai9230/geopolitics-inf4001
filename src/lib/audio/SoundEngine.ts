@@ -276,6 +276,21 @@ export class SoundEngine {
     this.tone("sawtooth", 350, 60, 0.4, 0.12);
   }
 
+  static turnStart() {
+    [523.25, 659.25, 783.99].forEach(
+      (frequency, index) => {
+        this.tone(
+          "triangle",
+          frequency,
+          frequency,
+          0.32,
+          0.14,
+          index * 0.14,
+        );
+      },
+    );
+  }
+
   static click() {
     this.tone("sine", 700, 300, 0.08, 0.08);
   }

@@ -48,6 +48,11 @@ const soldierAmount = z
 const actionSchema =
   z.discriminatedUnion("type", [
     z.object({
+      type: z.literal("diplomacy"),
+      targetId: z.string().regex(/^(human|npc:[a-z]{2})$/),
+      operation: z.enum(["offer", "break"]),
+    }).strict(),
+    z.object({
       type: z.literal("allocate"),
 
       allocations: z.record(

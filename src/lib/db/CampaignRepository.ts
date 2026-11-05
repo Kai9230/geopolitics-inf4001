@@ -342,7 +342,7 @@ export class CampaignRepository {
             state.activeAttack
               ?.attackerCountryId ??
             (
-              action.type === "start-attack"
+              (action.type === "start-attack" || action.type === "transfer")
                 ? action.fromId
                 : null
             ),
@@ -351,7 +351,7 @@ export class CampaignRepository {
             state.activeAttack
               ?.defenderCountryId ??
             (
-              action.type === "start-attack"
+              (action.type === "start-attack" || action.type === "transfer")
                 ? action.toId
                 : null
             ),

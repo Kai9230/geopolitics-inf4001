@@ -35,6 +35,8 @@ export interface ActiveAttack {
 
 export interface CampaignState {
   schemaVersion: 1;
+  treaties?: { members: string[]; expiresRound: number }[];
+  diplomacyUsed?: boolean;
 
   id: string;
   playerId: string;
@@ -72,6 +74,7 @@ export interface CountrySeed {
 }
 
 export type CampaignAction =
+  | { type: "diplomacy"; targetId: string; operation: "offer" | "break" }
   | {
       type: "allocate";
       allocations: Record<string, number>;

@@ -10,13 +10,7 @@ export default function MusicDirector() {
   const pathname = usePathname();
 
   useEffect(() => {
-    MusicPlayer.setScene(
-      pathname.startsWith("/game/")
-        ? "battle"
-        : pathname === "/"
-          ? "login"
-          : "silent",
-    );
+    MusicPlayer.setScene(pathname.startsWith("/game/") ? "battle" : "login");
 
     const unlock = () => {
       MusicPlayer.resume();
@@ -98,9 +92,7 @@ export default function MusicDirector() {
         handleVisibility,
       );
 
-      MusicPlayer.setScene(
-        "silent",
-      );
+      // The next route selects its track; preserve playback across lobby/login.
     };
   }, [pathname]);
 

@@ -32,14 +32,7 @@ export class MusicPlayer {
 
     this.loaded = true;
 
-    this.scene =
-      window.location.pathname.startsWith(
-        "/game/",
-      )
-        ? "battle"
-        : window.location.pathname === "/"
-          ? "login"
-          : "silent";
+    this.scene = window.location.pathname.startsWith("/game/") ? "battle" : "login";
 
     try {
       const data = JSON.parse(
@@ -146,17 +139,7 @@ export class MusicPlayer {
 
     this.loadSettings();
 
-    /*
-     * Game routes keep the battle theme playing
-     * between exchanges.
-     */
-    const effectiveScene:
-      MusicScene =
-      window.location.pathname.startsWith(
-        "/game/",
-      )
-        ? "battle"
-        : scene;
+    const effectiveScene: MusicScene = scene;
 
     this.scene = effectiveScene;
 

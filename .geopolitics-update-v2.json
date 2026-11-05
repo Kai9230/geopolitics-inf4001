@@ -1,0 +1,19 @@
+{
+  "backup": "C:\\Users\\Xenia Oliphant\\Desktop\\geopolitics\\geopolitics-backup-1793893363021",
+  "files": [
+    "src/types/game-state.ts",
+    "src/lib/engine/CampaignEngine.ts",
+    "src/app/api/campaigns/route.ts",
+    "src/lib/engine/NpcStrategy.ts",
+    "src/lib/db/CampaignRepository.ts",
+    "src/components/MusicDirector.tsx",
+    "src/lib/audio/MusicPlayer.ts",
+    "src/components/CampaignExperience.tsx",
+    "src/components/game/CampaignExtras.tsx",
+    "src/components/game/CampaignDeleteButton.tsx",
+    "src/components/game/CampaignExperience.module.css",
+    "next.config.ts",
+    "src/app/lobby/page.tsx",
+    "tests/specification.cjs"
+  ]
+}

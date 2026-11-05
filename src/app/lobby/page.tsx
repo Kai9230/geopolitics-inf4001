@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 
+
 import {
   onAuthStateChanged,
   signOut,
@@ -31,6 +32,7 @@ import type {
 } from "@/types/game-state";
 
 import styles from "@/styles/Campaign.module.css";
+import CampaignDeleteButton from "@/components/game/CampaignDeleteButton";
 
 
 type StatusFilter = "all" | "active" | "completed";
@@ -537,6 +539,9 @@ export default function LobbyPage() {
 
           <section className={styles.panel}>
             <h2>Campaign briefing</h2>
+            <Link href="/how-to-play" className={styles.link}>
+              How to play
+            </Link>
 
             <p className={styles.muted}>
               Choose your nation. Nine different
@@ -675,14 +680,24 @@ export default function LobbyPage() {
                     </p>
                   </div>
 
-                  <Link
-                    href={`/game/${campaign.id}`}
-                    className={styles.link}
-                  >
-                    {campaign.status === "completed"
-                      ? "View campaign"
-                      : "Open campaign"}
-                  </Link>
+
+                                <div className={styles.toolbar}>
+  <Link
+    href={`/game/${campaign.id}`}
+    className={styles.link}
+  >
+    {campaign.status === "completed"
+      ? "View campaign"
+      : "Open campaign"}
+  </Link>
+
+  <CampaignDeleteButton
+    id={campaign.id}
+    name={startingCountry}
+  />
+</div>
+
+                  
                 </article>
               );
             })}
