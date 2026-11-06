@@ -1,103 +1,122 @@
-# GeoPolitics
+GeoPolitics
+INF4001 — Application Guide
+1. About the application
+GeoPolitics is a single-player strategy game in which you compete against computer-controlled opponents to take control of ten countries. You choose a starting country, manage soldiers, attack opponents and decide how to distribute reinforcements. Campaigns are saved so that you can leave and continue later.
 
-Single-player web game using Next.js, React, TypeScript, Firebase Authentication,
-Cloud Firestore (NoSQL), and server-side Groq battle commentary.
+This guide explains how to access and use the submitted application. The hosted version is ready to use in a browser; no installation or VS Code setup is needed.
+2. Website and login details
+Application URL: Open GeoPolitics
 
-## Run locally
+Use a current version of Chrome, Edge, Firefox or another modern browser with an internet connection.
 
-1. Install Node.js 22 or newer and run `npm ci` in the project folder.
-2. Preserve `.env.local`. Configure the Firebase browser values and server-only
-   Firebase Admin credentials shown in `.env.example`. Never put Admin or Groq
-   secrets in variables beginning NEXT_PUBLIC_.
-3. Enable Firebase Email/Password Authentication and Firestore.
-4. Sign in to the Firebase CLI and deploy the project rules and indexes:
-   `npx firebase-tools login`
-   `npx firebase-tools deploy --only firestore:rules,firestore:indexes --project YOUR_PROJECT_ID`
-   The rules source is `src/lib/api/firestore.rules`; firebase.json selects it.
-5. Run `npm test`, `npx tsc --noEmit`, `npm run lint` and `npm run build`.
-6. Run `npm run dev` for editing, or `npm start` after a successful build to assess
-   production performance. Open http://localhost:3000.
-7. Configure GROQ_API_KEY on the server. Verify a new battle produces AI-labelled
-   commentary. A labelled fallback keeps gameplay available but does not prove
-   the required LLM integration works.
+The demonstration account email and password are supplied separately in SUBMISSION-DETAILS.txt, submitted privately through Amathuba.
 
-## Play
+To begin:
+1. Open the application URL.
+2. Enter the demonstration email and password on the sign-in page.
+3. Sign in to open the campaign lobby.
+You may also use the registration option to create a separate application account. Campaign ownership is associated with the account that creates the campaign.
+3. Creating a campaign
+The lobby is the starting point for creating and managing games.
+1. Choose the country you would like to control at the start.
+2. Select a difficulty level.
+3. Use the campaign creation control to start the game.
+Each campaign contains your selected country and nine different randomly selected countries. Starting armies are calculated from country populations, and the participant turn order is randomised.
 
-Choose one country; nine other countries are randomly selected. Exactly ten
-countries participate. Allocate reinforcements when prompted, select an owned
-country with at least two soldiers, then click an enemy to begin your one attack.
-Multiple dice exchanges are phases of that attack, not extra attacks. Each new
-saved exchange may show a plane flight; duplicate events do not restart it. Stop ends the turn; conquest permits transfers
-before ending the turn. Round two onward grants two soldiers per owned country.
-The field manual documents dice, conquest, transfers, spectators and diplomacy.
-Default playback is 1x; the owner may accelerate NPC presentation to 2.5x.
-Replay uses saved states and dice and never changes the live campaign.
+The campaign screen displays the board, countries, soldier counts, turn information and available actions. Follow the turn indicator to see whether it is your turn or an opponent's turn.
+4. Playing your turn
+Reinforcements
+From round two, your reinforcement total is two soldiers for each country you own. When the allocation controls appear, choose how to distribute the full total across your countries and confirm the allocation before continuing.
+Attacking
+1. Select a country you own with at least two soldiers.
+2. Select an enemy country as the target.
+3. Confirm the attack using the available attack control.
+4. Watch the dice, casualties and battle outcome as the attack progresses.
+A turn allows one attack against one target. Several dice exchanges may take place within that attack; they do not allow a second target to be attacked during the same turn.
 
-## Architecture and security
+Both sides roll a number of dice equal to the smaller of the attacking country's soldiers minus one and the defending country's soldiers. Dice are compared in their original pair order. A tied pair causes no casualty.
 
-CampaignEngine, BattleRules and DiplomacyRules contain rules. NpcStrategy makes
-reasoned choices. CampaignRepository encapsulates Firestore transactions and
-owns database mutations; API routes verify identity and validate commands.
-The browser renders confirmed results and cannot directly write game documents.
-Server crypto generates dice; ownership, revisions, turn and attack locks prevent
-unauthorized moves and duplicate application. Public campaign links intentionally
-expose the board and battle history for spectators. Do not store secrets there.
-Keep environment credentials out of source submissions.
+The attack ends when the target is conquered, the attacking country has only one soldier left, or you stop the attack. An exhausted attacker keeps its country with one soldier. Conquest rewards are based on the conquered country's original soldier value.
+Stopping an attack
+Use the stop control to stop the attack and end your turn. If a dice exchange is already resolving, it finishes before the stop takes effect.
+Transferring soldiers
+Use the transfer controls to move soldiers between countries you own when no attack is active. Choose the source country, destination country and amount, then confirm.
 
-## Bonus features
+The transfer must leave at least one soldier in the source country. After a conquest, use the available transfer controls before ending your turn. A conquest does not permit another attack against a new target in that turn.
+Computer-controlled opponents
+Opponents take their turns automatically while the owner's campaign is open. Their actions and explanations are shown in the campaign presentation. The speed control accelerates NPC presentation and waits when a player decision is required.
+Winning
+The campaign ends when one participant controls all ten countries. Continue playing to reach the completed campaign result screen.
+5. Saving and resuming campaigns
+Campaign progress is saved as confirmed actions are processed.
 
-1. Animated map, dice and original 3D miniatures.
-2. Recorded battle and full-game replay.
-3. NPC difficulty levels.
-4. Campaign/player analytics.
-5. Persistent attacks, server dice and revision checks against cheating.
-6. Strategic temporary alliances, diplomacy and reputation.
-7. Public realtime spectator links.
+To continue a game later:
+1. Sign in with the account that created it.
+2. Open the lobby.
+3. Locate the campaign and open it to resume.
+Use campaign search and status filters to find particular games. You can create more than one campaign and return to each independently.
+6. Battle history and replay
+The campaign history records events and outcomes. Replay lets you review saved boards, dice results and recorded commentary.
 
-Diplomacy is optional: treaties influence target selection, can be broken, and
-never change base dice rules, troop values, the attack limit or solo victory.
-Honouring expiry adds five reputation; ending early costs five; betrayal costs 25.
+Replay is a view of the saved game history. It does not roll new dice or submit new moves. Use the replay controls to review the available events, then return to the live campaign to continue playing.
+7. Sharing a campaign and spectator access
+1. Open the campaign you would like to share.
+2. Click Share.
+3. A Link copied message confirms that the campaign URL has been copied. If the browser prevents automatic copying, use the displayed URL.
+4. Open that URL in another browser or a signed-out private window to view the campaign as a spectator.
+Spectators can see the board, soldier counts and history. They cannot control the owner's turns or delete the owner's campaign.
 
-## Performance
+The owner must remain signed in with the campaign open for the current NPC simulation to advance. A spectator session alone does not advance opponents' turns.
+8. Commentary and audio
+Battle commentary accompanies the action. Reports generated by the language model are labelled AI. If that external service is unavailable, the application displays a fallback labelled Battle report.
 
-Campaign creation uses atomic batch creation. Confirmed API results update the
-presentation immediately; listeners reconcile saved state. Battle visuals use
-one shared clock without resetting the whole SVG timeline. Flights are deduplicated
-by exchange and replay session; streaming audio preloads metadata. Authentication,
-revocation, ownership checks and transactional game updates remain enabled.
-Use production mode and inspect Server-Timing to measure auth/database latency.
-Actual database region, network and provider latency still affect response time.
+Use the audio controls to enable or mute sound. Your mute preference is saved in the browser. Depending on browser settings, you may need to click or interact with the page before audio can play.
+9. Additional features
+Alongside the main game, the application includes:
+- Animated attacks, dice and battle miniatures.
+- Saved battle and campaign replay.
+- NPC difficulty levels and faster NPC presentation.
+- Campaign analytics.
+- Temporary diplomacy, alliances and reputation.
+- Shared spectator access.
+Diplomacy influences strategic decisions without changing the base dice rules or the objective of controlling all ten countries. Use the available diplomacy controls when offered during play.
 
-## Deploy and submit
+The application also validates ownership, turns, troop amounts and campaign revisions on the server, and generates battle dice server-side.
 
-Deploy to a Node-compatible Next.js host, configure environment values there,
-and authorize its domain in Firebase Authentication. Static export cannot run
-these server routes. Provide the hosted URL, a dedicated application demo account,
-assessor database access, source ZIP and this README as specified by the brief.
-Arrange access privately; never submit a service-account private key as a password.
-Exclude node_modules, .next, backups, build caches and .env.local from the source ZIP.
-Installed updater scripts are not needed to run the application.
+For further gameplay guidance, open How to play within the application.
+10. Database access for assessment
+The application uses Cloud Firestore in Firebase. The Firebase project ID and database-access confirmation are provided in SUBMISSION-DETAILS.txt.
 
-See REQUIREMENTS-CHECK.md for evidence and remaining live checks. Tests and a
-successful build cannot certify deployed authentication, live AI or assessor access.
+To inspect the database using an authorised assessor account:
+1. Open Firebase Console.
+2. Sign in with the Google account associated with the project access invitation.
+3. Select the project identified in the submission details.
+4. Open Firestore Database to inspect the stored campaign data, subject to the permissions assigned.
+The assessor accounts specified in the assignment are:
+- ammarcanani@gmail.com
+- mc.tanner@uct.ac.za
+- ridewaan.hanslo@uct.ac.za
+Firebase project access is separate from the application's demonstration login. Use the demonstration email and password for the game, and your authorised Google account for Firebase Console.
+11. Optional: running the submitted source locally
+This section is only needed if you wish to run the source code. It is not required to assess the hosted website.
 
-## Completion pass: 6 November 2026
+Prerequisites: Node.js 24 LTS with npm, an internet connection, and valid Firebase and Groq configuration. Private service credentials are excluded from the source ZIP. Local execution requires authorised credentials; a database-viewing invitation alone does not supply them.
+1. Extract the source ZIP and open a terminal in the folder containing package.json.
+2. Install dependencies:
+   npm ci
+3. Copy .env.example to .env.local beside package.json. Populate the Firebase browser configuration, Firebase server credentials and Groq settings listed in that example. Use the same Firebase project for the browser and server configuration. Keep private keys server-side.
+4. Ensure the configured Firebase project has Email/Password Authentication enabled, Firestore available, localhost authorised for authentication, and the supplied Firestore rules and indexes deployed. The root firebase.json identifies the rules and indexes files.
+5. Start the application:
+   npm run dev
+6. Open http://localhost:3000. Keep the terminal running while using the local application. Press Ctrl+C to stop it.
+To run a local production build, run these commands in order, waiting for the build to finish successfully before starting:
+npm run build
+npm start
+Use the submitted package.json and package-lock.json together so the dependency versions and compatibility settings are preserved.
+12. Submitted materials
+- Source ZIP: application source code, assets and configuration files.
+- README.md: this access and usage guide.
+- SUBMISSION-DETAILS.txt: deployed URL, demonstration login, Firebase project ID and database-access confirmation, supplied privately through Amathuba.
+The deployed website is the main entry point for using and assessing GeoPolitics.
 
-Share gives a visible Link copied confirmation with a manual URL when copying is
-blocked. Both troop forms use SoldierInput without leading zeros. The commentary
-dock follows the displayed live/replay event. Outcome text and LLM narrative are
-stored separately. Expired sessions refresh once; revoked sessions and uncertain
-mutations do not retry. The test command now runs all test files.
 
-If authentication fails, run `node scripts/check-services.mjs` from this folder
-with Node.js 22+ and your existing .env.local. This checks the private key format,
-server access token, Authentication permissions and Firestore connection without
-writing documents. It prints only check results and sanitized error codes.
-`app/invalid-credential` does not justify deleting collections: check the active
-service-account key, project alignment, network access and computer clock first.
-Never share the service-account JSON, token or full environment file.
-
-This review passed 35 mocked/pure automated tests, type checking, lint and a
-production build using placeholder browser settings. It does not certify your
-live Firebase project, real Groq output, browser appearance or deployment. Follow
-the full brief/rubric map and live acceptance checklist in REQUIREMENTS-CHECK.md.

@@ -1,0 +1,18 @@
+Application name: GeoPolitics
+
+Deployed URL:
+https://geopoliticsinf4001n.netlify.app/
+
+Application demonstration email:
+[kaygemini7@gmail.com]
+
+Application demonstration password:
+[12345!]
+
+Firebase project ID:
+[geopolitics-game-4d323]
+
+Database access granted to:
+ammarcanani@gmail.com
+mc.tanner@uct.ac.za
+ridewaan.hanslo@uct.ac.za
