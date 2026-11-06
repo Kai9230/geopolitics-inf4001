@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/specification.cjs"
+    "test": "node --test tests/*.cjs"
   },
   "dependencies": {
     "@google/genai": "^2.31.0",

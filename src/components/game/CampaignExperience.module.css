@@ -611,3 +611,9 @@
 .reputation strong { color:#f6dc99;white-space:nowrap; }
 .proposal { padding:12px 14px;border-left:3px solid #69c9ad;border-radius:8px;background:#69c9ad10;color:#d8e1ee;font-size:12px; }
 .proposal p { margin:6px 0 0;line-height:1.6;color:#afbdce; }
+
+/* Share confirmation stays beside the control, including on small screens. */
+.shareControl { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 100%; }
+.shareStatus { color: #b6ebd7; font-size: 12px; }
+.shareControl input { min-width: 0; width: min(80vw, 320px); padding: 10px; color: #e7eef8;
+  background: #07111d; border: 1px solid #67809e66; border-radius: 8px; }

@@ -34,6 +34,8 @@ import type {
 import type { Country } from "@/types";
 
 import SoldierInput from "./game/SoldierInput";
+import ShareCampaignButton from "./game/ShareCampaignButton";
+import CampaignCorrespondent from "./CampaignCorrespondent";
 
 import { RollingDice } from "@/components/game/RollingDice";
 
@@ -784,6 +786,12 @@ export default function CampaignExperience({
   const latestAttack =
     ReplayRules.latestAttack(model.events);
 
+  const reportEvent = history !== null
+    ? recorded ?? null
+    : shown
+      ? model.events.find(event => event.revision === shown.revision) ?? shown
+      : model.events.filter(event => event.dice && event.revision <= (model.cursor ?? -1)).at(-1) ?? null;
+
   const upcoming = [
     ...live.turnOrder.slice(live.turnIndex + 1),
     ...live.turnOrder.slice(0, live.turnIndex),
@@ -843,23 +851,7 @@ export default function CampaignExperience({
             How to play
           </Link>
 
-          <button
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(
-                  location.href,
-                );
-
-                setNotice("Campaign link copied.");
-              } catch {
-                setNotice(
-                  "Copy the address from your browser.",
-                );
-              }
-            }}
-          >
-            Share
-          </button>
+          <ShareCampaignButton />
 
           <button
             aria-pressed={fast}
@@ -1560,6 +1552,7 @@ export default function CampaignExperience({
           </button>
         </aside>
       </div>
+      <CampaignCorrespondent event={reportEvent} replay={history !== null} />
     </main>
   );
 }
@@ -1592,6 +1585,8 @@ function Allocation({
     <form
       onSubmit={(event) => {
         event.preventDefault();
+        if (!enabled || total !== state.pendingReinforcements ||
+            Object.values(values).some(amount => !Number.isSafeInteger(amount) || amount < 0)) return;
         submit(values);
       }}
     >
@@ -1666,6 +1661,8 @@ function Transfer({
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          if (!enabled || !source || from === to || !own.some(country => country.id === to) ||
+              !Number.isSafeInteger(amount) || amount < 1 || amount >= source.soldiers) return;
 
           submit({
             type: "transfer",

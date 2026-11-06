@@ -372,21 +372,8 @@ export class BattleCommentary {
           return;
         }
 
-        const label =
-          report.source === "groq"
-            ? "AI correspondent"
-            : "Battle report";
-
-        transaction.update(reference, {
-          commentary: report,
-
-          message:
-            exchange.message +
-            " — " +
-            label +
-            ": " +
-            report.text,
-        });
+        // Keep the authoritative outcome separate from the generated narrative.
+        transaction.update(reference, { commentary: report });
       },
     );
   }

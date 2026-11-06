@@ -17,35 +17,35 @@ const hash = text =>
 
 const patches = [
   {
-    "file": "package.json",
-    "before": "027029a91217217995aba39963f00e46a3f6024bd02f277085d20439a4037a49",
-    "after": "9f8863d7ce445cf36567fc975d811393a3cc8a625b192ee750eff29f68863057",
-    "edits": [
+    file: "package.json",
+    before: "027029a91217217995aba39963f00e46a3f6024bd02f277085d20439a4037a49",
+    after: "9f8863d7ce445cf36567fc975d811393a3cc8a625b192ee750eff29f68863057",
+    edits: [
       {
-        "start": 9,
-        "end": 10,
-        "lines": [
+        start: 9,
+        end: 10,
+        lines: [
           "    \"test\": \"node --test tests/*.cjs\"\n"
         ]
       }
     ]
   },
   {
-    "file": "src/components/CampaignCorrespondent.tsx",
-    "before": "a5dcb927162bd8f83e5bf60d6502eb953ae628b5ff0d2698dbf7afb4cbd32a58",
-    "after": "b28e43338be95b81e2eae104e558d5faaaac9ce2b26d0f21c4111d7befec23da",
-    "edits": [
+    file: "src/components/CampaignCorrespondent.tsx",
+    before: "a5dcb927162bd8f83e5bf60d6502eb953ae628b5ff0d2698dbf7afb4cbd32a58",
+    after: "b28e43338be95b81e2eae104e558d5faaaac9ce2b26d0f21c4111d7befec23da",
+    edits: [
       {
-        "start": 2,
-        "end": 21,
-        "lines": [
+        start: 2,
+        end: 21,
+        lines: [
           "import type { PresentedEvent } from \"@/lib/engine/CampaignPresentation\";\n"
         ]
       },
       {
-        "start": 23,
-        "end": 55,
-        "lines": [
+        start: 23,
+        end: 55,
+        lines: [
           "export default function CampaignCorrespondent({ event, replay }: {\n",
           "  event: PresentedEvent | null;\n",
           "  replay: boolean;\n",
@@ -57,9 +57,9 @@ const patches = [
         ]
       },
       {
-        "start": 57,
-        "end": 61,
-        "lines": [
+        start: 57,
+        end: 61,
+        lines: [
           "    <aside className={styles.correspondentDock}\n",
           "      aria-label={replay ? \"Recorded war correspondent\" : \"Live war correspondent\"}\n",
           "      data-live-correspondent={!replay}>\n",
@@ -85,29 +85,29 @@ const patches = [
         ]
       },
       {
-        "start": 63,
-        "end": 234,
-        "lines": []
+        start: 63,
+        end: 234,
+        lines: []
       }
     ]
   },
   {
-    "file": "src/components/CampaignExperience.tsx",
-    "before": "c6b8067e826f601f3dc25d00f60c028f957aa661c265c46350a79ecc2ccf185e",
-    "after": "a56979b7d85024851d3c552f11c9a5b5f18d401d707098b65a874a5b4d7ec8f9",
-    "edits": [
+    file: "src/components/CampaignExperience.tsx",
+    before: "c6b8067e826f601f3dc25d00f60c028f957aa661c265c46350a79ecc2ccf185e",
+    after: "a56979b7d85024851d3c552f11c9a5b5f18d401d707098b65a874a5b4d7ec8f9",
+    edits: [
       {
-        "start": 36,
-        "end": 36,
-        "lines": [
+        start: 36,
+        end: 36,
+        lines: [
           "import ShareCampaignButton from \"./game/ShareCampaignButton\";\n",
           "import CampaignCorrespondent from \"./CampaignCorrespondent\";\n"
         ]
       },
       {
-        "start": 786,
-        "end": 786,
-        "lines": [
+        start: 786,
+        end: 786,
+        lines: [
           "  const reportEvent = history !== null\n",
           "    ? recorded ?? null\n",
           "    : shown\n",
@@ -117,31 +117,31 @@ const patches = [
         ]
       },
       {
-        "start": 845,
-        "end": 862,
-        "lines": [
+        start: 845,
+        end: 862,
+        lines: [
           "          <ShareCampaignButton />\n"
         ]
       },
       {
-        "start": 1562,
-        "end": 1562,
-        "lines": [
+        start: 1562,
+        end: 1562,
+        lines: [
           "      <CampaignCorrespondent event={reportEvent} replay={history !== null} />\n"
         ]
       },
       {
-        "start": 1594,
-        "end": 1594,
-        "lines": [
+        start: 1594,
+        end: 1594,
+        lines: [
           "        if (!enabled || total !== state.pendingReinforcements ||\n",
           "            Object.values(values).some(amount => !Number.isSafeInteger(amount) || amount < 0)) return;\n"
         ]
       },
       {
-        "start": 1668,
-        "end": 1668,
-        "lines": [
+        start: 1668,
+        end: 1668,
+        lines: [
           "          if (!enabled || !source || from === to || !own.some(country => country.id === to) ||\n",
           "              !Number.isSafeInteger(amount) || amount < 1 || amount >= source.soldiers) return;\n"
         ]
@@ -149,31 +149,31 @@ const patches = [
     ]
   },
   {
-    "file": "src/app/layout.tsx",
-    "before": "b856e1c71851fcbdc0f854bdb0fa4f7d49be44044f3e09bd237dca23ce11018e",
-    "after": "3ac892e89de3c88491ce0b5cb1ca1e38de121a635264bd1585e337a37d63809d",
-    "edits": [
+    file: "src/app/layout.tsx",
+    before: "b856e1c71851fcbdc0f854bdb0fa4f7d49be44044f3e09bd237dca23ce11018e",
+    after: "3ac892e89de3c88491ce0b5cb1ca1e38de121a635264bd1585e337a37d63809d",
+    edits: [
       {
-        "start": 10,
-        "end": 11,
-        "lines": []
+        start: 10,
+        end: 11,
+        lines: []
       },
       {
-        "start": 50,
-        "end": 51,
-        "lines": []
+        start: 50,
+        end: 51,
+        lines: []
       }
     ]
   },
   {
-    "file": "src/components/game/CampaignExperience.module.css",
-    "before": "7eb55938b7f63e213b6091270c8885748fd2e9f1966c27acad9474baabdafd92",
-    "after": "2d8d233557a0c05c5a5ea6b7706d1ced73fbf328f5377b5d455269bd66fcb411",
-    "edits": [
+    file: "src/components/game/CampaignExperience.module.css",
+    before: "7eb55938b7f63e213b6091270c8885748fd2e9f1966c27acad9474baabdafd92",
+    after: "2d8d233557a0c05c5a5ea6b7706d1ced73fbf328f5377b5d455269bd66fcb411",
+    edits: [
       {
-        "start": 613,
-        "end": 613,
-        "lines": [
+        start: 613,
+        end: 613,
+        lines: [
           "\n",
           "/* Share confirmation stays beside the control, including on small screens. */\n",
           ".shareControl { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 100%; }\n",
@@ -185,48 +185,48 @@ const patches = [
     ]
   },
   {
-    "file": "src/app/api/campaigns/route.ts",
-    "before": "5e8ee63f097adc0e5ba80e191ca30723095f2bcccfd094c035b7abe09b253a47433",
-    "after": "97e8bf49a17992447914672d0d049ebfba833632e95a22029c46ee5b91abcfc4",
-    "edits": [
+    file: "src/app/api/campaigns/route.ts",
+    before: "5e8ee63f097adc0e5ba80e191ca307285e7c45ec24f99b76711e6dc6ccb18aed",
+    after: "97e8bf49a17992447914672d0d049ebfba833632e95a22029c46ee5b91abcfc4",
+    edits: [
       {
-        "start": 454,
-        "end": 902,
-        "lines": []
+        start: 454,
+        end: 902,
+        lines: []
       }
     ]
   },
   {
-    "file": "src/lib/api/CampaignClient.ts",
-    "before": "89ea2aaece86568f48b5d7b4177254f86e6d34ab42a2a8379f408ad4abc96d1e",
-    "after": "096a26c166e26d04aaa86b7084148cf933e06a2fbc54cd768f1dcee7dda7f2f5",
-    "edits": [
+    file: "src/lib/api/CampaignClient.ts",
+    before: "89ea2aaece86568f48b5d7b4177254f86e6d34ab42a2a8379f408ad4abc96d1e",
+    after: "096a26c166e26d04aaa86b7084148cf933e06a2fbc54cd768f1dcee7dda7f2f5",
+    edits: [
       {
-        "start": 25,
-        "end": 25,
-        "lines": [
+        start: 25,
+        end: 25,
+        lines: [
           "    public readonly code?: string,\n"
         ]
       },
       {
-        "start": 55,
-        "end": 55,
-        "lines": [
+        start: 55,
+        end: 55,
+        lines: [
           "    refreshed = false,\n",
           "    expectedUid?: string,\n"
         ]
       },
       {
-        "start": 56,
-        "end": 56,
-        "lines": [
+        start: 56,
+        end: 56,
+        lines: [
           "    await auth.authStateReady();\n"
         ]
       },
       {
-        "start": 65,
-        "end": 66,
-        "lines": [
+        start: 65,
+        end: 66,
+        lines: [
           "    if (expectedUid && user.uid !== expectedUid) {\n",
           "      throw new CampaignApiError(\"Your account changed. Sign in again.\", 401);\n",
           "    }\n",
@@ -237,9 +237,9 @@ const patches = [
         ]
       },
       {
-        "start": 84,
-        "end": 84,
-        "lines": [
+        start: 84,
+        end: 84,
+        lines: [
           "    // Only expiration is rejected before any mutation, so only this is safe to retry.\n",
           "    if (response.status === 401 && data.code === \"SESSION_EXPIRED\" && !refreshed) {\n",
           "      if (auth.currentUser?.uid !== user.uid) {\n",
@@ -251,23 +251,23 @@ const patches = [
         ]
       },
       {
-        "start": 90,
-        "end": 90,
-        "lines": [
+        start: 90,
+        end: 90,
+        lines: [
           "        typeof data.code === \"string\" ? data.code : undefined,\n"
         ]
       }
     ]
   },
   {
-    "file": "src/lib/ai/BattleCommentary.ts",
-    "before": "7b0f0ca0bc3514c8320c5816dbb23cf291c81d4ab996c28782261a56f68d4dcc",
-    "after": "d1783fe86aec1577b618f1558baf8636bca968d2994418298615a5585e85e9b4",
-    "edits": [
+    file: "src/lib/ai/BattleCommentary.ts",
+    before: "7b0f0ca0bc3514c8320c5816dbb23cf291c81d4ab996c28782261a56f68d4dcc",
+    after: "d1783fe86aec1577b618f1558baf8636bca968d2994418298615a5585e85e9b4",
+    edits: [
       {
-        "start": 374,
-        "end": 389,
-        "lines": [
+        start: 374,
+        end: 389,
+        lines: [
           "        // Keep the authoritative outcome separate from the generated narrative.\n",
           "        transaction.update(reference, { commentary: report });\n"
         ]
@@ -275,14 +275,14 @@ const patches = [
     ]
   },
   {
-    "file": "scripts/check-services.mjs",
-    "before": null,
-    "after": "c49428e2316f56e5c1dd577605923bb29c6e7038dc1f6a24fb6f2e00608112eb",
-    "edits": [
+    file: "scripts/check-services.mjs",
+    before: null,
+    after: "c49428e2316f56e5c1dd577605923bb29c6e7038dc1f6a24fb6f2e00608112eb",
+    edits: [
       {
-        "start": 0,
-        "end": 0,
-        "lines": [
+        start: 0,
+        end: 0,
+        lines: [
           "// Read-only diagnostics. Never prints keys, tokens, email addresses or provider messages.\n",
           "import fs from \"node:fs\";\n",
           "import { createPrivateKey } from \"node:crypto\";\n",
@@ -339,14 +339,14 @@ const patches = [
     ]
   },
   {
-    "file": "tests/controls.cjs",
-    "before": null,
-    "after": "bb5e33fc13f62a77b0e08f422d68c605a2056c94608b63a452fadfc6d1c68e79",
-    "edits": [
+    file: "tests/controls.cjs",
+    before: null,
+    after: "bb5e33fc13f62a77b0e08f422d68c605a2056c94608b63a452fadfc6d1c68e79",
+    edits: [
       {
-        "start": 0,
-        "end": 0,
-        "lines": [
+        start: 0,
+        end: 0,
+        lines: [
           "/* eslint-disable @typescript-eslint/no-require-imports */\n",
           "const fs = require(\"node:fs\");\n",
           "const path = require(\"node:path\");\n",
@@ -447,14 +447,14 @@ const patches = [
     ]
   },
   {
-    "file": "tests/security.cjs",
-    "before": null,
-    "after": "a5671231af0e65e07b3339bd0ed32216ecb347daef3f5394770f36f593ba35db",
-    "edits": [
+    file: "tests/security.cjs",
+    before: null,
+    after: "a5671231af0e65e07b3339bd0ed32216ecb347daef3f5394770f36f593ba35db",
+    edits: [
       {
-        "start": 0,
-        "end": 0,
-        "lines": [
+        start: 0,
+        end: 0,
+        lines: [
           "/* eslint-disable @typescript-eslint/no-require-imports */\n",
           "const fs = require(\"node:fs\");\n",
           "const path = require(\"node:path\");\n",
@@ -689,14 +689,14 @@ const patches = [
     ]
   },
   {
-    "file": "tests/commentary.cjs",
-    "before": null,
-    "after": "72ca4acac2d0c2a162d9a7b6354d43703f3ffd0d341ca5a1e1791f5d0ac0ef1f",
-    "edits": [
+    file: "tests/commentary.cjs",
+    before: null,
+    after: "72ca4acac2d0c2a162d9a7b6354d43703f3ffd0d341ca5a1e1791f5d0ac0ef1f",
+    edits: [
       {
-        "start": 0,
-        "end": 0,
-        "lines": [
+        start: 0,
+        end: 0,
+        lines: [
           "/* eslint-disable @typescript-eslint/no-require-imports */\n",
           "const fs = require(\"node:fs\");\n",
           "const path = require(\"node:path\");\n",
@@ -811,14 +811,14 @@ const patches = [
     ]
   },
   {
-    "file": "src/components/game/ShareCampaignButton.tsx",
-    "before": null,
-    "after": "5a842b082a32f51b02d3c2db32da449a6f80f76517f23428f55422e44123607f",
-    "edits": [
+    file: "src/components/game/ShareCampaignButton.tsx",
+    before: null,
+    after: "5a842b082a32f51b02d3c2db32da449a6f80f76517f23428f55422e44123607f",
+    edits: [
       {
-        "start": 0,
-        "end": 0,
-        "lines": [
+        start: 0,
+        end: 0,
+        lines: [
           "\"use client\";\n",
           "\n",
           "import { useRef, useState } from \"react\";\n",
@@ -887,14 +887,14 @@ const patches = [
     ]
   },
   {
-    "file": "README.md",
-    "before": "dfa70aa4d04ffa11d2152f03cd41102e48212ebb9baf7d067a2db64e11c8bd68",
-    "after": "405072a0c80c80709f88fe7610693310e868946b3e06d40220165f40e6aed65c",
-    "edits": [
+    file: "README.md",
+    before: "dfa70aa4d04ffa11d2152f03cd41102e48212ebb9baf7d067a2db64e11c8bd68",
+    after: "405072a0c80c80709f88fe7610693310e868946b3e06d40220165f40e6aed65c",
+    edits: [
       {
-        "start": 82,
-        "end": 82,
-        "lines": [
+        start: 82,
+        end: 82,
+        lines: [
           "\n",
           "## Completion pass: 6 November 2026\n",
           "\n",
@@ -921,35 +921,35 @@ const patches = [
     ]
   },
   {
-    "file": "REQUIREMENTS-CHECK.md",
-    "before": "b2ec3db38b6b9848e6b0c45c68604b1f747a1e92250b4946dab3c8a8874b7d94",
-    "after": "78a53d5cd75173bc934a969ceb1654d08bb5d4fa8d1bcb315063b725dd435141",
-    "edits": [
+    file: "REQUIREMENTS-CHECK.md",
+    before: "b2ec3db38b6b9848e6b0c45c68604b1f747a1e92250b4946dab3c8a8874b7d94",
+    after: "78a53d5cd75173bc934a969ceb1654d08bb5d4fa8d1bcb315063b725dd435141",
+    edits: [
       {
-        "start": 0,
-        "end": 1,
-        "lines": [
+        start: 0,
+        end: 1,
+        lines: [
           "# GeoPolitics: brief and 56-mark rubric audit\n"
         ]
       },
       {
-        "start": 2,
-        "end": 4,
-        "lines": [
+        start: 2,
+        end: 4,
+        lines: [
           "Reviewed 6 November 2026 against the supplied UCT INF4001N Geopolitics entrance-exam brief and 2027 marksheet. Baseline: finalise.zip. This is implementation evidence, not an awarded or predicted mark.\n"
         ]
       },
       {
-        "start": 5,
-        "end": 23,
-        "lines": [
+        start: 5,
+        end: 23,
+        lines: [
           "## Current result\n"
         ]
       },
       {
-        "start": 24,
-        "end": 25,
-        "lines": [
+        start: 24,
+        end: 25,
+        lines: [
           "- All 35 automated tests pass (rules, simulations, API/repository authorization, guarded token recovery, commentary service, input and clipboard handlers).\n",
           "- TypeScript, ESLint and the production build pass with non-secret placeholder browser configuration.\n",
           "- There are no user Firebase Admin credentials or Groq keys in this review environment. Mocks establish application behaviour, not live provider connectivity.\n",
@@ -958,16 +958,16 @@ const patches = [
         ]
       },
       {
-        "start": 26,
-        "end": 41,
-        "lines": [
+        start: 26,
+        end: 41,
+        lines: [
           "## Required gameplay and access\n"
         ]
       },
       {
-        "start": 42,
-        "end": 43,
-        "lines": [
+        start: 42,
+        end: 43,
+        lines: [
           "| Requirement | Source evidence and automated coverage | Remaining acceptance evidence |\n",
           "|---|---|---|\n",
           "| Single-player game against nine NPCs; exactly ten distinct countries | CampaignEngine.create; setup and catalogue-choice tests | Create a real campaign |\n",
@@ -996,16 +996,16 @@ const patches = [
         ]
       },
       {
-        "start": 44,
-        "end": 59,
-        "lines": [
+        start: 44,
+        end: 59,
+        lines: [
           "The country catalogue records Worldometer as the population source. The 2026 source page was opened during review; sampled large-country values and South Africa match the catalogue. Stored values are a snapshot so existing games retain stable baseSoldiers.\n"
         ]
       },
       {
-        "start": 60,
-        "end": 62,
-        "lines": [
+        start: 60,
+        end: 62,
+        lines: [
           "## Exact rubric: fourteen criteria, four marks each\n",
           "\n",
           "These are evidence targets for the assessor. No row is marked 4/4 here because marks depend on the demonstrated system and assessor judgment.\n",
@@ -1081,20 +1081,20 @@ const patches = [
     ]
   },
   {
-    "file": "src/lib/engine/GameEngine.ts",
-    "before": "ec89431ba33d93b4153a75d1bdbc262b951a03729d585ec586f2e467fdb5e682",
-    "after": null,
-    "edits": []
+    file: "src/lib/engine/GameEngine.ts",
+    before: "ec89431ba33d93b4153a75d1bdbc262b951a03729d585ec586f2e467fdb5e682",
+    after: null,
+    edits: []
   },
   {
-    "file": "src/lib/db/GameRepository.ts",
-    "before": "8be92c01ffb37dbbbecf634c30723095f2bcccfd094c035b7abe09b253a47433",
-    "after": null,
-    "edits": []
+    file: "src/lib/db/GameRepository.ts",
+    before: "8be92c01ffb37dbbbecf634c30723095f2bcccfd094c035b7abe09b253a47433",
+    after: null,
+    edits: []
   }
 ];
 
-// Validate every affected file before making any changes.
+// Validate every file before writing anything.
 const changes = [];
 
 for (const patch of patches) {
@@ -1161,7 +1161,6 @@ if (changes.length) {
     )
   );
 
-  // Backups are stored outside the project folder.
   for (const item of changes) {
     if (item.original === null) {
       continue;
@@ -1199,7 +1198,6 @@ if (changes.length) {
       }
     }
   } catch (error) {
-    // Restore the original files if writing fails.
     for (const item of changes) {
       if (item.original === null) {
         fs.rmSync(item.target, {

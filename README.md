@@ -80,3 +80,24 @@ Installed updater scripts are not needed to run the application.
 
 See REQUIREMENTS-CHECK.md for evidence and remaining live checks. Tests and a
 successful build cannot certify deployed authentication, live AI or assessor access.
+
+## Completion pass: 6 November 2026
+
+Share gives a visible Link copied confirmation with a manual URL when copying is
+blocked. Both troop forms use SoldierInput without leading zeros. The commentary
+dock follows the displayed live/replay event. Outcome text and LLM narrative are
+stored separately. Expired sessions refresh once; revoked sessions and uncertain
+mutations do not retry. The test command now runs all test files.
+
+If authentication fails, run `node scripts/check-services.mjs` from this folder
+with Node.js 22+ and your existing .env.local. This checks the private key format,
+server access token, Authentication permissions and Firestore connection without
+writing documents. It prints only check results and sanitized error codes.
+`app/invalid-credential` does not justify deleting collections: check the active
+service-account key, project alignment, network access and computer clock first.
+Never share the service-account JSON, token or full environment file.
+
+This review passed 35 mocked/pure automated tests, type checking, lint and a
+production build using placeholder browser settings. It does not certify your
+live Firebase project, real Groq output, browser appearance or deployment. Follow
+the full brief/rubric map and live acceptance checklist in REQUIREMENTS-CHECK.md.

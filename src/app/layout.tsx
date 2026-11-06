@@ -8,7 +8,6 @@ import {
 
 import AudioControls from "@/components/AudioControls";
 import MusicDirector from "@/components/MusicDirector";
-import CampaignCorrespondent from "@/components/CampaignCorrespondent";
 
 import "./globals.css";
 
@@ -48,7 +47,6 @@ export default function RootLayout({
 
         {children}
 
-        <CampaignCorrespondent />
 
         <AudioControls />
       </body>
