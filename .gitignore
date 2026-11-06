@@ -37,6 +37,9 @@ yarn-error.log*
 .env*.local
 .env
 
+
+SUBMISSION-DETAILS.txt
+
 # vercel
 .vercel
 
