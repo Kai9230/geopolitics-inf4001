@@ -1,5 +1,7 @@
 GeoPolitics
-INF4001 — Application Guide
+INF4001 — Application Guide   
+
+The deployed url is: https://geopoliticsinf4001n.netlify.app
 1. About the application
 GeoPolitics is a single-player strategy game in which you compete against computer-controlled opponents to take control of ten countries. You choose a starting country, manage soldiers, attack opponents and decide how to distribute reinforcements. Campaigns are saved so that you can leave and continue later.
 
@@ -12,7 +14,7 @@ Use a current version of Chrome, Edge, Firefox or another modern browser with an
 The demonstration account email and password are supplied separately in SUBMISSION-DETAILS.txt, submitted privately through Amathuba.
 
 To begin:
-1. Open the application URL.
+1. Open the application URL which  is https://geopoliticsinf4001n.netlify.app
 2. Enter the demonstration email and password on the sign-in page.
 3. Sign in to open the campaign lobby.
 You may also use the registration option to create a separate application account. Campaign ownership is associated with the account that creates the campaign.
