@@ -43,3 +43,22 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# new 
+
+# Keep the configuration template
+!.env.example
+
+# Old backups and archives
+*.backup
+*.zip
+
+# Old updater scripts
+/finish-*.mjs
+/finish-*.cjs
+/fix-*.mjs
+/fix-*.cjs
+/optimise-*.cjs
+/polish-*.cjs
+/complete-*.cjs
+/update-*.cjs
