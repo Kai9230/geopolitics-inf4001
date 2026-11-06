@@ -62,3 +62,5 @@ next-env.d.ts
 /polish-*.cjs
 /complete-*.cjs
 /update-*.cjs
+# Local Netlify folder
+.netlify
